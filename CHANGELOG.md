@@ -4,7 +4,7 @@ All notable changes of the project. Newest first.
 
 ## 2026-10-11 — comparison
 
-- README: a comparison table with icons (✅ ⚠️ ❌) with Apple Hide My Email, SimpleLogin and addy.io, what running it yourself gives (own domain, nobody in the middle, encryption, a small attack surface) and what the services do better.
+- README: a comparison table with icons against other alternatives (hosted alias services such as Apple Hide My Email, SimpleLogin and addy.io), what running it yourself gives (own domain, nobody in the middle, encryption, a small attack surface) and what the services do better. PGP encryption of forwarded mail is marked as planned.
 
 ## 2026-10-11 — first public version
 

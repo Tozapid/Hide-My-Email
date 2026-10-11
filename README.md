@@ -26,26 +26,22 @@ The demo has **no mail**: it neither receives nor sends a single message. Everyt
 
 Apple Hide My Email, SimpleLogin and addy.io solve the same problem well; the difference is who runs the service and whose domain the addresses are on.
 
-| | 🛡️ **Hide My Email** (this project) | 🍎 Apple Hide My Email | 🔀 SimpleLogin | 📮 addy.io |
-| --- | --- | --- | --- | --- |
-| 🏢 **Who runs it** | ✅ You, in your own AWS account and region | ❌ Apple | ❌ Proton | ❌ addy.io |
-| 👀 **Who can read your mail in transit** | ✅ Nobody but AWS as your processor | ⚠️ Apple | ⚠️ SimpleLogin / Proton | ⚠️ addy.io |
-| 🌐 **Domain of the aliases** | ✅ Always your own, any number of domains | ❌ `@icloud.com` only | ⚠️ Shared; your own on paid plans | ⚠️ Shared or a username subdomain; your own on paid plans |
-| 🔁 **Addresses survive a change of provider** | ✅ Yes: move the MX, keep every address | ❌ No | ⚠️ Only with your own domain | ⚠️ Only with your own domain |
-| ♾️ **Number of aliases** | ✅ Unlimited (optional cap) | ✅ Unlimited with iCloud+ | ⚠️ Limited on the free plan | ⚠️ Limited on the free plan |
-| ↩️ **Reply from the alias** | ✅ Yes, relay addresses show the sender | ✅ Yes | ✅ Yes | ✅ Yes |
-| 💰 **Price** | ✅ AWS usage, about $0.75 a month ([Cost](#cost)) | 💳 iCloud+ subscription | 🆓 Free plan, 💳 paid for more | 🆓 Free plan, 💳 paid for more |
-| 📖 **Open source, self-hostable** | ✅ MIT, one `terraform apply` | ❌ No | ✅ Yes | ✅ Yes |
-| 🖥️ **Servers to run** | ✅ None: serverless, nothing to patch | ✅ None (Apple's) | ⚠️ A server to maintain, if self-hosted | ⚠️ A server to maintain, if self-hosted |
-| 🔌 **API, Bitwarden, browser extension** | ✅ addy.io-compatible: Bitwarden and the addy.io extension | ⚠️ Apple devices and Safari only, no public API | ✅ Yes | ✅ Yes |
-| 🔐 **PGP encryption of forwarded mail** | ❌ No | ❌ No | ✅ Yes | ✅ Yes |
-| 📨 **Message log with attachments** | ✅ Text-only view, kept in your bucket | ❌ No | ❌ No | ❌ No |
-| 🏷️ **Labels** | ❌ No | ❌ No | ⚠️ Mailboxes and notes | ✅ Yes |
-| 📱 **Mobile apps** | ⚠️ No app; the page works on a phone | ✅ Built into iOS | ✅ Yes | ✅ Yes |
+| | 🛡️ **Hide My Email** (this project) | 🔀 **Other alternatives** |
+| --- | --- | --- |
+| 🏢 **Who runs it** | ✅ You, in your own AWS account and region | ❌ The provider |
+| 👀 **Who can read your mail in transit** | ✅ Nobody but AWS as your processor | ⚠️ The provider |
+| 🌐 **Domain of the aliases** | ✅ Always your own, any number of domains | ⚠️ The provider's domain; your own only on some services and paid plans |
+| 🔁 **Addresses survive a change of provider** | ✅ Yes: move the MX, keep every address | ⚠️ Only with your own domain |
+| ♾️ **Number of aliases** | ✅ Unlimited (optional cap) | ⚠️ Often limited on free plans |
+| ↩️ **Reply from the alias** | ✅ Yes, relay addresses show the sender | ✅ Yes |
+| 💰 **Price** | ✅ AWS usage, about $0.75 a month ([Cost](#cost)) | 💳 A subscription for anything beyond the free plan |
+| 📖 **Open source, self-hostable** | ✅ MIT, one `terraform apply` | ⚠️ Some of them |
+| 🖥️ **Servers to run** | ✅ None: serverless, nothing to patch | ⚠️ A server to maintain, if self-hosted |
+| 🔌 **API, Bitwarden, browser extension** | ✅ addy.io-compatible: Bitwarden and the addy.io extension | ⚠️ Depends on the service |
+| 🔐 **PGP encryption of forwarded mail** | 🔜 Planned | ⚠️ Some of them |
+| 📨 **Message log with attachments** | ✅ Text-only view, kept in your bucket | ❌ Usually not |
 
-✅ yes / a strength · ⚠️ partly, or with a catch · ❌ no · 🆓 free · 💳 paid
-
-Comparison as of October 2026; plans and limits of the services change, see their pages: [Apple](https://www.apple.com/icloud/), [SimpleLogin](https://simplelogin.io/pricing/), [addy.io](https://addy.io/#pricing).
+Other alternatives are services such as [Apple Hide My Email](https://www.apple.com/icloud/), [SimpleLogin](https://simplelogin.io/) and [addy.io](https://addy.io/); their plans and features change, see their pages (October 2026).
 
 What you get by running it yourself:
 
@@ -57,7 +53,7 @@ What you get by running it yourself:
 - ✉️ **Aligned authentication.** SPF, DKIM and DMARC of your own domain, BIMI with your logo (see [Deliverability and spam](#deliverability-and-spam)).
 - 💸 **It costs cents.** Pay-per-use AWS pricing, mostly within the free allowances.
 
-⚖️ What the services do better: they need no AWS account and no SES production access, offer PGP encryption of forwarded mail, mobile apps and labels, and someone else watches the deliverability of their domains. The message log here keeps copies of your mail in your own bucket — convenient, but delete what you do not need, or empty the log from the page.
+⚖️ What the services do better: they need no AWS account and no SES production access, some already encrypt forwarded mail with PGP (planned here), and someone else watches the deliverability of their domains. The message log here keeps copies of your mail in your own bucket — convenient, but delete what you do not need, or empty the log from the page.
 
 ## How it works
 
