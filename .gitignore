@@ -9,3 +9,6 @@ tfplan
 __pycache__/
 *.pyc
 .DS_Store
+
+# Not kept: terraform init takes the newest provider within the constraint in terraform.tf.
+.terraform.lock.hcl
