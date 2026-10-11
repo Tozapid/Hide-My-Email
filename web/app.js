@@ -164,7 +164,7 @@
     const node = el("dialog", { class: "modal" }, [
       el("div", { class: "modal-head" }, [
         el("h2", {}, title),
-        el("button", { type: "button", class: "ghost close", "aria-label": t("close"), onclick: () => node.close() }, "×"),
+        el("button", { type: "button", class: "icon-button close", "aria-label": t("close"), onclick: () => node.close() }, "×"),
       ]),
       body,
     ]);
@@ -222,7 +222,7 @@
 
   function loginCard(children, onsubmit) {
     root.replaceChildren(el("main", { class: "login" }, el("form", {
-      class: "card",
+      class: "login-card",
       onsubmit: (event) => {
         event.preventDefault();
         onsubmit();
@@ -241,7 +241,7 @@
 
   // The language menu of the sign-in page and of the account settings.
   function languagePicker(onchange) {
-    return el("select", { "aria-label": t("language.title"), onchange: (event) => onchange(event.target.value) },
+    return el("select", { class: "lang-select", "aria-label": t("language.title"), onchange: (event) => onchange(event.target.value) },
       i18n.languages.map(([code, name]) => el("option", { value: code, selected: code === language }, name)));
   }
 
@@ -251,22 +251,23 @@
     const email = el("input", { type: "email", autocomplete: "username", required: true, value: demo.email || "" });
     const password = el("input", { type: "password", autocomplete: "current-password", required: true, value: demo.password || "" });
     loginCard([
-      el("div", { class: "login-head" }, [
-        el("h1", {}, "Hide My Email"),
+      el("img", { class: "login-mark", src: "/favicon.svg", alt: "" }),
+      el("h1", {}, "Hide My Email"),
+      demo.email ? el("p", { class: "demo-note" }, [
+        t("demo.signIn", { email: demo.email, password: demo.password }),
+        demo.reset ? " " + t("demo.reset") : "",
+      ]) : null,
+      el("label", {}, [t("login.email"), email]),
+      el("label", {}, [t("login.password"), password]),
+      el("button", { class: "primary", type: "submit" }, t("login.signIn")),
+      error,
+      el("div", { class: "login-lang" }, [
+        el("a", { href: REPOSITORY, rel: "noopener" }, t("login.source")),
         languagePicker((code) => {
           setLanguage(code);
           showLogin();
         }),
       ]),
-      el("label", {}, [t("login.email"), email]),
-      el("label", {}, [t("login.password"), password]),
-      el("button", { class: "primary", type: "submit" }, t("login.signIn")),
-      error,
-      demo.email ? el("p", { class: "demo-note" }, [
-        t("demo.signIn", { email: demo.email, password: demo.password }),
-        demo.reset ? " " + t("demo.reset") : "",
-      ]) : null,
-      el("p", { class: "source" }, el("a", { href: REPOSITORY, rel: "noopener" }, t("login.source"))),
     ].filter(Boolean), () => {
       error.textContent = "";
       const user = new window.AmazonCognitoIdentity.CognitoUser({ Username: email.value.trim(), Pool: userPool() });
@@ -283,7 +284,7 @@
     const password = el("input", { type: "password", autocomplete: "new-password", required: true, minlength: "12" });
     loginCard([
       el("h1", {}, t("newPassword.title")),
-      el("p", { class: "muted" }, t("newPassword.hint")),
+      el("p", { class: "lede" }, t("newPassword.hint")),
       el("label", {}, [t("password.new"), password]),
       el("button", { class: "primary", type: "submit" }, t("newPassword.submit")),
       error,
@@ -298,7 +299,7 @@
     const code = el("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", pattern: "[0-9]{6}", maxlength: "6", required: true });
     loginCard([
       el("h1", {}, t("totp.title")),
-      el("p", { class: "muted" }, t("totp.hint")),
+      el("p", { class: "lede" }, t("totp.hint")),
       el("label", {}, [t("totp.code"), code]),
       el("button", { class: "primary", type: "submit" }, t("login.signIn")),
       error,
@@ -416,8 +417,8 @@
   function render() {
     root.replaceChildren(el("div", { class: "app" }, [
       el("header", { class: "top" }, [
-        el("div", { class: "brand" }, [el("strong", {}, "Hide My Email"), el("span", {}, state.domains.includes(location.hostname) ? location.hostname : state.domain)]),
-        el("nav", { class: "tabs" }, [
+        el("div", { class: "brand" }, [el("img", { class: "brand-mark", src: "/favicon.svg", alt: "" }), el("strong", {}, "Hide My Email"), el("span", {}, state.domains.includes(location.hostname) ? location.hostname : state.domain)]),
+        el("nav", { class: "seg" }, [
           tabButton("aliases", t("tab.aliases")),
           tabButton("messages", t("tab.messages")),
         ]),
@@ -439,7 +440,7 @@
   function tabButton(tab, title) {
     return el("button", {
       type: "button",
-      class: "tab" + (state.tab === tab ? " current" : ""),
+      class: state.tab === tab ? "active" : null,
       "aria-current": state.tab === tab ? "page" : null,
       onclick: () => {
         state.tab = tab;
@@ -777,7 +778,7 @@
       t(value === "pending" ? "dest.pending" : "dest.none"),
       el("button", {
         type: "button",
-        class: "link",
+        class: "link-button",
         onclick: async () => {
           try {
             await api("/destinations", { method: "POST", body: { address } });
@@ -836,7 +837,7 @@
         t("messages.aliasFilter", { address: (state.items.find((item) => item.local === box.alias) || {}).address || box.alias }),
         el("button", {
           type: "button",
-          class: "link",
+          class: "link-button",
           "aria-label": t("messages.removeFilter"),
           onclick: () => {
             box.alias = "";
