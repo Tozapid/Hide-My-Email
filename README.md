@@ -26,35 +26,38 @@ The demo has **no mail**: it neither receives nor sends a single message. Everyt
 
 Apple Hide My Email, SimpleLogin and addy.io solve the same problem well; the difference is who runs the service and whose domain the addresses are on.
 
-| | **Hide My Email (this project)** | Apple Hide My Email | SimpleLogin | addy.io |
+| | 🛡️ **Hide My Email** (this project) | 🍎 Apple Hide My Email | 🔀 SimpleLogin | 📮 addy.io |
 | --- | --- | --- | --- | --- |
-| Who runs it | You, in your own AWS account and region | Apple | Proton | addy.io |
-| Who can read your mail in transit | Nobody but AWS as your processor; no third-party service | Apple | SimpleLogin / Proton | addy.io |
-| Domain of the aliases | Always your own, as many domains as you like | `@icloud.com` | Shared domains; your own on paid plans | Shared domains and a username subdomain; your own on paid plans |
-| Addresses survive a change of provider | Yes: the domain is yours, move the MX and keep every address | No | Only with your own domain | Only with your own domain |
-| Aliases | Unlimited (an optional cap) | Unlimited with iCloud+ | Limited on the free plan | Limited on the free plan |
-| Replies from the alias | Yes, through relay addresses that show the sender | Yes | Yes | Yes |
-| Price | AWS usage: about $0.75 a month with one Route 53 zone (see [Cost](#cost)) | An iCloud+ subscription | Free plan; paid plans for unlimited aliases and own domains | Free plan; paid plans for more |
-| Open source, self-hostable | Yes, MIT; one `terraform apply` | No | Yes | Yes |
-| Servers to run | None: serverless, nothing to patch, nothing running between messages | — | A server and its upkeep, if self-hosted | A server and its upkeep, if self-hosted |
-| API, Bitwarden generator, browser extension | addy.io-compatible API: Bitwarden and the addy.io extension work with it | Built into Apple devices and Safari; no public API | Yes | Yes |
-| PGP encryption of forwarded mail | No | No | Yes | Yes |
-| Message log in a web page | Yes: text-only view, attachments, kept in your bucket until you delete them | No | No | No |
-| Mobile apps | No (the page works on a phone) | Built into iOS | Yes | Yes |
+| 🏢 **Who runs it** | ✅ You, in your own AWS account and region | ❌ Apple | ❌ Proton | ❌ addy.io |
+| 👀 **Who can read your mail in transit** | ✅ Nobody but AWS as your processor | ⚠️ Apple | ⚠️ SimpleLogin / Proton | ⚠️ addy.io |
+| 🌐 **Domain of the aliases** | ✅ Always your own, any number of domains | ❌ `@icloud.com` only | ⚠️ Shared; your own on paid plans | ⚠️ Shared or a username subdomain; your own on paid plans |
+| 🔁 **Addresses survive a change of provider** | ✅ Yes: move the MX, keep every address | ❌ No | ⚠️ Only with your own domain | ⚠️ Only with your own domain |
+| ♾️ **Number of aliases** | ✅ Unlimited (optional cap) | ✅ Unlimited with iCloud+ | ⚠️ Limited on the free plan | ⚠️ Limited on the free plan |
+| ↩️ **Reply from the alias** | ✅ Yes, relay addresses show the sender | ✅ Yes | ✅ Yes | ✅ Yes |
+| 💰 **Price** | ✅ AWS usage, about $0.75 a month ([Cost](#cost)) | 💳 iCloud+ subscription | 🆓 Free plan, 💳 paid for more | 🆓 Free plan, 💳 paid for more |
+| 📖 **Open source, self-hostable** | ✅ MIT, one `terraform apply` | ❌ No | ✅ Yes | ✅ Yes |
+| 🖥️ **Servers to run** | ✅ None: serverless, nothing to patch | ✅ None (Apple's) | ⚠️ A server to maintain, if self-hosted | ⚠️ A server to maintain, if self-hosted |
+| 🔌 **API, Bitwarden, browser extension** | ✅ addy.io-compatible: Bitwarden and the addy.io extension | ⚠️ Apple devices and Safari only, no public API | ✅ Yes | ✅ Yes |
+| 🔐 **PGP encryption of forwarded mail** | ❌ No | ❌ No | ✅ Yes | ✅ Yes |
+| 📨 **Message log with attachments** | ✅ Text-only view, kept in your bucket | ❌ No | ❌ No | ❌ No |
+| 🏷️ **Labels** | ❌ No | ❌ No | ⚠️ Mailboxes and notes | ✅ Yes |
+| 📱 **Mobile apps** | ⚠️ No app; the page works on a phone | ✅ Built into iOS | ✅ Yes | ✅ Yes |
+
+✅ yes / a strength · ⚠️ partly, or with a catch · ❌ no · 🆓 free · 💳 paid
 
 Comparison as of October 2026; plans and limits of the services change, see their pages: [Apple](https://www.apple.com/icloud/), [SimpleLogin](https://simplelogin.io/pricing/), [addy.io](https://addy.io/#pricing).
 
 What you get by running it yourself:
 
-- **Your own domain.** Aliases are `…@hide.your-domain`, not a service's domain that sites may block as "disposable". Since the domain is yours, the addresses outlive this project or any provider: point the MX elsewhere and every address still works.
-- **Nobody in the middle.** Mail passes only through AWS services in your account and region: no company between you and your mail reads, profiles or can lose it, and there is no account of yours on another service to be breached or closed.
-- **Encryption and private storage.** TLS on every hop that the sending server supports (SES receiving takes TLS, SES sending uses it whenever the receiving server does), HTTPS only on the page and the API, S3 server-side encryption for stored mail and attachments, DynamoDB encryption at rest, the attachment signing key as an SSM SecureString. Buckets are private and readable only by the stack's CloudFront distributions; API keys are stored as SHA-256 hashes.
-- **A small, auditable attack surface.** No servers or containers to patch: managed services, one Python function without dependencies, least-privilege IAM roles, a strict content security policy with pinned scripts, a page that never renders a message's HTML. Deploys use GitHub OIDC with no long-lived AWS keys.
-- **Strong sign-in.** Cognito with no self sign-up, optional two-step sign-in with an authenticator app, short-lived tokens.
-- **Aligned authentication.** SPF, DKIM and DMARC of your own domain, BIMI with your logo (see [Deliverability and spam](#deliverability-and-spam)).
-- **It costs cents.** Pay-per-use AWS pricing, mostly within the free allowances.
+- 🌐 **Your own domain.** Aliases are `…@hide.your-domain`, not a service's domain that sites may block as "disposable". Since the domain is yours, the addresses outlive this project or any provider: point the MX elsewhere and every address still works.
+- 🕵️ **Nobody in the middle.** Mail passes only through AWS services in your account and region: no company between you and your mail reads, profiles or can lose it, and there is no account of yours on another service to be breached or closed.
+- 🔒 **Encryption and private storage.** TLS on every hop that the sending server supports (SES receiving takes TLS, SES sending uses it whenever the receiving server does), HTTPS only on the page and the API, S3 server-side encryption for stored mail and attachments, DynamoDB encryption at rest, the attachment signing key as an SSM SecureString. Buckets are private and readable only by the stack's CloudFront distributions; API keys are stored as SHA-256 hashes.
+- 🧱 **A small, auditable attack surface.** No servers or containers to patch: managed services, one Python function without dependencies, least-privilege IAM roles, a strict content security policy with pinned scripts, a page that never renders a message's HTML. Deploys use GitHub OIDC with no long-lived AWS keys.
+- 🔑 **Strong sign-in.** Cognito with no self sign-up, optional two-step sign-in with an authenticator app, short-lived tokens.
+- ✉️ **Aligned authentication.** SPF, DKIM and DMARC of your own domain, BIMI with your logo (see [Deliverability and spam](#deliverability-and-spam)).
+- 💸 **It costs cents.** Pay-per-use AWS pricing, mostly within the free allowances.
 
-What the services do better: they need no AWS account and no SES production access, offer PGP encryption of forwarded mail, mobile apps and labels, and someone else watches the deliverability of their domains. The message log here keeps copies of your mail in your own bucket — convenient, but delete what you do not need, or empty the log from the page.
+⚖️ What the services do better: they need no AWS account and no SES production access, offer PGP encryption of forwarded mail, mobile apps and labels, and someone else watches the deliverability of their domains. The message log here keeps copies of your mail in your own bucket — convenient, but delete what you do not need, or empty the log from the page.
 
 ## How it works
 
