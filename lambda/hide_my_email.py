@@ -2,8 +2,9 @@
 
 One function serves both sides. With MAIL_ENABLED off (the public demo) there
 is no mail at all: SES neither delivers nor is asked about addresses, and the
-API manages aliases, keys and the message log only. MAX_ALIASES and
-MAX_TOKENS cap what visitors of the demo can create.
+API manages aliases, keys, correspondents and the message log only, and no
+new message goes out. MAX_ALIASES, MAX_TOKENS and MAX_RELAYS cap what
+visitors of the demo can create.
 
 Mail. SES stores every message for the alias domains in S3 and then invokes
 the function with the receipt. Each recipient is handled on its own:
@@ -17,6 +18,12 @@ the function with the receipt. Each recipient is handled on its own:
 - a relay address, sent from the address the alias forwards to: the reply
   goes to the original sender from the alias, with that address taken out of
   the text.
+
+A conversation may also start here. The page adds a correspondent to an
+alias, which makes the relay address of the pair without a message from
+them: mail to it from the forwarding address goes to them from the alias, as
+a reply would. The page also sends a new text message from an alias, and the
+recipient becomes a correspondent of it.
 
 Aliases live on one or more domains: DOMAIN, which is also the page, and the
 others in DOMAINS. A local part is unique across them: an alias belongs to
@@ -34,7 +41,8 @@ at /attachments/* to whoever holds the signed cookie the API sets.
 API. The web page calls /api/... through API Gateway with a Cognito token:
 list, create, change and delete aliases, ask SES to verify a forwarding
 address while the account is in the SES sandbox, find the conversation behind
-a relay address, read and delete the message log, manage API keys.
+a relay address, list, add and remove the correspondents of an alias, send a
+new message from an alias, read and delete the message log, manage API keys.
 
 /api/v1/aliases is the part of the addy.io API that the username generator
 of Bitwarden and the addy.io browser extension use. API Gateway lets it
@@ -86,6 +94,11 @@ CODE_LENGTH = 12
 # A relay address: the sender's address in the local part, "_", the code.
 RELAY_RE = re.compile(rf"^[a-z0-9_]+_([a-z2-7]{{{CODE_LENGTH}}})$")
 MESSAGE_PAGE = 50
+# A new message from the page: a subject on one line and plain text.
+SUBJECT_LIMIT = 300
+TEXT_LIMIT = 100_000
+# The request with such a text, room left for JSON escapes.
+MESSAGE_BODY_LIMIT = 4 * TEXT_LIMIT
 # How long the signed cookie for /attachments/* lasts; every successful API
 # answer renews it.
 COOKIE_SECONDS = 3600
@@ -165,6 +178,11 @@ ERRORS = {
     "token_not_found": "API key not found",
     "bad_domain": "Unknown domain",
     "bad_format": "format must be random_words or custom",
+    "bad_recipient": "The recipient must be an email address outside the alias domains",
+    "bad_name": "Name: up to 100 characters, no @, quotes or angle brackets",
+    "bad_subject": "Subject: text on one line, up to 300 characters",
+    "bad_text": "The message must be text, up to 100,000 characters",
+    "send_rejected": "SES did not send the message; while the account is in the SES sandbox the recipient has to be verified",
 }
 
 
@@ -317,18 +335,29 @@ def reply(code, raw, mail, receipt):
 # the original message to read, kept until the page deletes them. The message
 # has gone out already, so a failure here is only logged.
 def log_message(mail, raw, fields):
+    return store_log(raw, fields, received=mail.get("messageId"))
+
+
+# A received message is copied from MAIL_PREFIX; one written here (received is
+# None) is stored as it was sent. Returns the id in the log, or None.
+def store_log(raw, fields, received=None):
     at = now_iso()
     message_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + secrets.token_hex(4)
     try:
-        s3().copy_object(
-            Bucket=env("MAIL_BUCKET"),
-            Key=env("MESSAGES_PREFIX") + message_id,
-            CopySource={"Bucket": env("MAIL_BUCKET"), "Key": env("MAIL_PREFIX") + mail["messageId"]},
-        )
+        if received:
+            s3().copy_object(
+                Bucket=env("MAIL_BUCKET"),
+                Key=env("MESSAGES_PREFIX") + message_id,
+                CopySource={"Bucket": env("MAIL_BUCKET"), "Key": env("MAIL_PREFIX") + received},
+            )
+        else:
+            s3().put_object(Bucket=env("MAIL_BUCKET"), Key=env("MESSAGES_PREFIX") + message_id, Body=raw)
         count = store_attachments(message_id, parse(raw))
         table().put_item(Item={"pk": "MSG", "sk": message_id, "at": at, "size": len(raw), "attachments": count, **fields})
+        return message_id
     except Exception:
-        logger.exception("message %s was not logged", mail.get("messageId"))
+        logger.exception("message %s was not logged", received or message_id)
+        return None
 
 
 # The name shown with the alias in a reply: the alias's own sender name, or
@@ -564,10 +593,24 @@ def api_route(method, parts, event):
         return response(200, {"address": address, "status": destination_status(address)})
     if len(parts) == 2 and parts[0] == "relays" and method == "GET":
         return response(200, find_relay(parts[1]))
+    if parts == ["relays"] and method == "POST":
+        payload = body_json(event)
+        alias = existing_alias(str(payload.get("alias") or ""))
+        address = clean_recipient(payload.get("address"))
+        name = clean_name(payload.get("name"))
+        if limit_reached("REPLY", "MAX_RELAYS"):
+            raise ApiError(429, "limit_reached")
+        return response(201, add_relay(alias, address, name))
+    if len(parts) == 2 and parts[0] == "relays" and method == "DELETE":
+        return response(200, delete_relay(parts[1]))
+    if len(parts) == 3 and parts[0] == "aliases" and parts[2] == "relays" and method == "GET":
+        return response(200, {"items": alias_relays(existing_alias(parts[1]))})
     if parts == ["messages"] and method == "GET":
         params = event.get("queryStringParameters") or {}
         items, cursor = find_messages(params.get("alias", ""), params.get("q", ""), params.get("cursor", ""), MESSAGE_PAGE)
         return response(200, {"items": [public_message(item) for item in items], "cursor": cursor})
+    if parts == ["messages"] and method == "POST":
+        return response(201, send_new(body_json(event, limit=MESSAGE_BODY_LIMIT)))
     if parts == ["messages"] and method == "DELETE":
         params = event.get("queryStringParameters") or {}
         items, _ = find_messages(params.get("alias", ""), params.get("q", ""))
@@ -851,6 +894,105 @@ def find_relay(address):
         "sender": item["sender"],
         "name": item.get("name") or "",
     }
+
+
+# The relay address of a correspondent and what the page shows of it.
+def public_relay(item, alias):
+    domain = alias_domain(alias) if alias else domain_name()
+    return {
+        "code": item["sk"],
+        "relay": relay_address(item["sender"], item["sk"], domain),
+        "alias": item["alias"],
+        "address": f"{item['alias']}@{domain}",
+        "sender": item["sender"],
+        "name": item.get("name") or "",
+        "updated_at": item.get("updated_at") or "",
+    }
+
+
+# A correspondent of an alias without a message from them: the same record a
+# forwarded message makes, so mail to the relay address from the forwarding
+# address goes to them. Adding one that is there already keeps its name
+# unless a new one is given.
+def add_relay(alias, address, name=""):
+    local = alias["sk"]
+    code = reply_code(local, address)
+    found = table().get_item(Key={"pk": "REPLY", "sk": code}).get("Item") or {}
+    item = {
+        "pk": "REPLY",
+        "sk": code,
+        "alias": local,
+        "sender": address,
+        "name": name or found.get("name") or "",
+        "updated_at": now_iso(),
+    }
+    table().put_item(Item=item)
+    return public_relay(item, alias)
+
+
+def delete_relay(address):
+    code = relay_code(address)
+    try:
+        table().delete_item(Key={"pk": "REPLY", "sk": code or ""}, ConditionExpression="attribute_exists(sk)")
+    except Exception as exc:
+        if error_code(exc) == "ConditionalCheckFailedException":
+            raise ApiError(404, "relay_not_found") from exc
+        raise
+    return {"deleted": code}
+
+
+# Everyone with a relay address for the alias: who wrote to it and whom the
+# page added, by address.
+def alias_relays(alias):
+    items = [item for item in query_all("REPLY") if item.get("alias") == alias["sk"]]
+    return [public_relay(item, alias) for item in sorted(items, key=lambda item: item["sender"])]
+
+
+# A new plain text message from an alias, written on the page. The recipient
+# becomes a correspondent of the alias, so that mail from the forwarding
+# address to the relay address carries the conversation on.
+def send_new(payload):
+    if not mail_enabled():
+        raise ApiError(400, "mail_disabled")
+    alias = existing_alias(str(payload.get("alias") or ""))
+    to = clean_recipient(payload.get("to"))
+    subject = clean_subject(payload.get("subject"))
+    text = payload.get("text")
+    if not isinstance(text, str) or len(text) > TEXT_LIMIT:
+        raise ApiError(400, "bad_text")
+    relay = add_relay(alias, to)
+    domain = alias_domain(alias)
+    address = alias_address(alias)
+    name = alias.get("sender_name") or ""
+    message = email.message.EmailMessage(policy=email.policy.SMTP)
+    alias_from = email.utils.formataddr((name, address))
+    message["From"] = alias_from
+    message["To"] = email.utils.formataddr((relay["name"], to))
+    message["Subject"] = subject
+    message["Date"] = email.utils.formatdate(usegmt=True)
+    message["Message-ID"] = email.utils.make_msgid(domain=domain)
+    message.set_content(text)
+    try:
+        send(alias_from, [to], message)
+    except Exception as exc:
+        if error_code(exc) in ("MessageRejected", "AccountSendingPausedException", "MailFromDomainNotVerifiedException"):
+            raise ApiError(400, "send_rejected") from exc
+        raise
+    message_id = store_log(message.as_bytes(policy=email.policy.SMTP), {
+        "direction": "out",
+        "alias": alias["sk"],
+        "alias_domain": domain,
+        "code": relay["code"],
+        "relay": relay["relay"],
+        "from_name": name,
+        "from_address": address,
+        "to_name": relay["name"],
+        "to_address": to,
+        "delivered_to": to,
+        "subject": subject,
+        "spam": False,
+    })
+    return {"id": message_id, "to": to, "relay": relay["relay"]}
 
 
 # Messages newest first, those of one alias and those that mention the query
@@ -1235,6 +1377,32 @@ def clean_forward(value):
     return address
 
 
+# A correspondent: an address outside the alias domains, where mail would
+# loop back here.
+def clean_recipient(value):
+    address = str(value or "").strip().lower()
+    if not EMAIL_RE.fullmatch(address) or address.split("@")[1] in alias_domains():
+        raise ApiError(400, "bad_recipient")
+    return address
+
+
+# A correspondent's name, shown with their address in To; the same rules as a
+# sender name.
+def clean_name(value):
+    try:
+        return clean_sender_name(value)
+    except ApiError as exc:
+        raise ApiError(400, "bad_name") from exc
+
+
+def clean_subject(value):
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str) or len(value) > SUBJECT_LIMIT or any(char in value for char in "\r\n"):
+        raise ApiError(400, "bad_subject")
+    return value.strip()
+
+
 # A domain of the aliases; empty is DOMAIN.
 def clean_domain(value, status=400):
     domain = str(value or "").strip().lower() or domain_name()
@@ -1243,11 +1411,12 @@ def clean_domain(value, status=400):
     return domain
 
 
-def body_json(event):
+# limit is in characters; a new message takes more than the rest of the API.
+def body_json(event, limit=10_000):
     raw = event.get("body") or ""
     if event.get("isBase64Encoded") and raw:
         raw = base64.b64decode(raw).decode("utf-8")
-    if len(raw) > 10_000:
+    if len(raw) > limit:
         raise ApiError(413, "too_large")
     value = json.loads(raw) if raw else {}
     if not isinstance(value, dict):

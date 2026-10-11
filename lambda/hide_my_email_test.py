@@ -563,6 +563,78 @@ class ApiTest(Base):
         self.assertEqual(self.call("GET", "/api/relays/r-nothingthere")[0], 404)
         self.assertEqual(self.call("GET", "/api/relays/quiet-river-42")[0], 404)
 
+    # Correspondents and new messages
+    def test_add_a_correspondent_and_write_to_them_from_the_mail_client(self):
+        alias = self.alias("sunny-raven-80", domain=OTHER)
+        status, added = self.call("POST", "/api/relays", {"alias": "Sunny-Raven-80", "address": " Sergey.Yugoman@Armenotech.com ", "name": "Sergey"})
+        code = app.reply_code("sunny-raven-80", "sergey.yugoman@armenotech.com")
+        self.assertEqual(status, 201)
+        self.assertEqual(added["relay"], f"sergey_yugoman_at_armenotech_com_{code}@{OTHER}")
+        self.assertEqual((added["address"], added["sender"], added["name"]), (alias, "sergey.yugoman@armenotech.com", "Sergey"))
+        self.deliver(raw_message(f"Me <{OWNER}>", added["relay"], subject="Hello Sergey", body=f"Hi! Write to me, not to {OWNER}."), [added["relay"]], OWNER)
+        source, to, message = self.ses.sent[-1]
+        self.assertEqual((source, to), (alias, ["sergey.yugoman@armenotech.com"]), "goes to them from the alias, as a reply would")
+        self.assertEqual(message["To"].addresses[0].display_name, "Sergey")
+        self.assertNotIn(OWNER, message.get_body(("plain",)).get_content().lower())
+        status, listed = self.call("GET", "/api/aliases/sunny-raven-80/relays")
+        self.assertEqual((status, [item["relay"] for item in listed["items"]]), (200, [added["relay"]]))
+        self.assertEqual(self.call("POST", "/api/relays", {"alias": "sunny-raven-80", "address": "sergey.yugoman@armenotech.com"})[1]["name"], "Sergey", "adding again keeps the name")
+
+    def test_a_correspondent_is_removed_and_its_relay_address_stops(self):
+        self.alias()
+        relay = self.call("POST", "/api/relays", {"alias": "quiet-river-42", "address": "bob@shop.test"})[1]["relay"]
+        self.assertEqual(self.call("DELETE", f"/api/relays/{relay}"), (200, {"deleted": app.relay_code(relay)}))
+        self.assertEqual(self.call("DELETE", f"/api/relays/{relay}")[0], 404)
+        self.assertEqual(self.call("GET", "/api/aliases/quiet-river-42/relays")[1]["items"], [])
+        self.deliver(raw_message(OWNER, relay), [relay], OWNER)
+        self.assertEqual(self.ses.sent, [], "an unknown code is dropped")
+
+    def test_a_correspondent_needs_an_alias_and_a_foreign_address(self):
+        self.alias()
+        self.assertEqual(self.call("POST", "/api/relays", {"alias": "nobody", "address": "bob@shop.test"})[1]["code"], "alias_not_found")
+        self.assertEqual(self.call("GET", "/api/aliases/nobody/relays")[0], 404)
+        for bad in ("", "bob", "bob@", f"someone@{OTHER}", f"x@{DOMAIN}"):
+            self.assertEqual(self.call("POST", "/api/relays", {"alias": "quiet-river-42", "address": bad})[1]["code"], "bad_recipient", bad)
+        self.assertEqual(self.call("POST", "/api/relays", {"alias": "quiet-river-42", "address": "bob@shop.test", "name": "Bob <bob@x>"})[1]["code"], "bad_name")
+
+    def test_send_a_new_message_from_an_alias(self):
+        alias = self.alias(sender_name="Shop Buyer")
+        status, sent = self.call("POST", "/api/messages", {"alias": "quiet-river-42", "to": "Bob@Shop.test", "subject": " Where is my order? ", "text": "Hello,\norder 42 please."})
+        self.assertEqual(status, 201)
+        source, to, message = self.ses.sent[-1]
+        self.assertEqual((source, to), (alias, ["bob@shop.test"]))
+        self.assertEqual(self.ses.sources[-1], f"Shop Buyer <{alias}>")
+        self.assertEqual(str(message["Subject"]), "Where is my order?")
+        self.assertTrue(str(message["Message-ID"]).endswith(f"@{DOMAIN}>"))
+        self.assertIn("order 42 please.", message.get_body(("plain",)).get_content())
+        code = app.reply_code("quiet-river-42", "bob@shop.test")
+        self.assertEqual(sent["relay"], app.relay_address("bob@shop.test", code, DOMAIN))
+        self.assertIn(("REPLY", code), self.table.items, "the recipient becomes a correspondent")
+        items = self.call("GET", "/api/messages")[1]["items"]
+        self.assertEqual((items[0]["id"], items[0]["direction"], items[0]["to_address"], items[0]["subject"]), (sent["id"], "out", "bob@shop.test", "Where is my order?"))
+        read = self.call("GET", f"/api/messages/{sent['id']}")[1]
+        self.assertIn("order 42 please.", read["text"])
+        # Bob answers the alias; the owner carries on from the mail client.
+        self.deliver(raw_message("Bob <bob@shop.test>", alias, subject="Re: Where is my order?"), [alias], "bob@shop.test")
+        self.assertEqual(self.ses.sent[-1][0], sent["relay"], "the answer comes from the same relay address")
+
+    def test_a_new_message_is_checked_and_a_refused_one_is_not_logged(self):
+        self.alias()
+        base = {"alias": "quiet-river-42", "to": "bob@shop.test", "subject": "Hi", "text": "Hi"}
+        for change, code in (({"alias": "nobody"}, "alias_not_found"), ({"to": f"x@{DOMAIN}"}, "bad_recipient"), ({"subject": "a\r\nBcc: x@y.test"}, "bad_subject"),
+                             ({"subject": "x" * 301}, "bad_subject"), ({"text": None}, "bad_text"), ({"text": "x" * 100_001}, "bad_text")):
+            self.assertEqual(self.call("POST", "/api/messages", {**base, **change})[1]["code"], code, change)
+
+        class Rejected(Exception):
+            response = {"Error": {"Code": "MessageRejected"}}
+
+        def reject(**kwargs):
+            raise Rejected()
+
+        self.ses.send_email = reject
+        self.assertEqual(self.call("POST", "/api/messages", base), (400, {"error": app.ERRORS["send_rejected"], "code": "send_rejected"}))
+        self.assertEqual(self.call("GET", "/api/messages")[1]["items"], [], "nothing went out, nothing is logged")
+
     def deliver_some(self):
         first, second = self.alias("bold-fox-10"), self.alias("calm-owl-20")
         for number in range(3):
@@ -847,6 +919,23 @@ class ApiTest(Base):
         self.assertEqual(self.call("POST", "/api/aliases", {}), (429, {"error": "The limit of this installation is reached; delete something first", "code": "limit_reached"}))
         self.assertEqual(self.call("POST", "/api/tokens", {"name": "a"})[0], 201)
         self.assertEqual(self.call("POST", "/api/tokens", {"name": "b"})[0], 429)
+
+    def test_without_mail_correspondents_are_kept_but_nothing_is_sent(self):
+        os.environ["MAIL_ENABLED"] = "false"
+        self.addCleanup(os.environ.pop, "MAIL_ENABLED")
+        self.alias()
+        status, added = self.call("POST", "/api/relays", {"alias": "quiet-river-42", "address": "bob@shop.test"})
+        self.assertEqual((status, added["sender"]), (201, "bob@shop.test"))
+        self.assertEqual(self.call("POST", "/api/messages", {"alias": "quiet-river-42", "to": "ann@shop.test", "subject": "Hi", "text": "Hi"})[1]["code"], "mail_disabled")
+        self.assertEqual(self.ses.sent, [])
+        self.assertEqual([item["sender"] for item in self.call("GET", "/api/aliases/quiet-river-42/relays")[1]["items"]], ["bob@shop.test"], "a refused message makes no correspondent")
+
+    def test_correspondents_have_a_cap_too(self):
+        os.environ["MAX_RELAYS"] = "1"
+        self.addCleanup(os.environ.pop, "MAX_RELAYS")
+        self.alias()
+        self.assertEqual(self.call("POST", "/api/relays", {"alias": "quiet-river-42", "address": "bob@shop.test"})[0], 201)
+        self.assertEqual(self.call("POST", "/api/relays", {"alias": "quiet-river-42", "address": "ann@shop.test"})[1]["code"], "limit_reached")
 
     def test_only_verified_emails_get_in(self):
         self.assertEqual(self.call("GET", "/api/aliases", verified="false")[0], 403)

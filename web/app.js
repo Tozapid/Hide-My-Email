@@ -30,6 +30,7 @@
   // older one (r-<code>), with or without the domain.
   const RELAY_RE = /^(r-[a-z0-9]+|[a-z0-9_]+_[a-z2-7]{12})(@\S*)?$/i;
   const ISSUER = "Hide My Email";
+  // The open source project of this page, linked from the sign-in page.
   const REPOSITORY = "https://github.com/Tozapid/Hide-My-Email";
   // The language is the Cognito attribute "locale" of the user; the browser
   // keeps a copy so that the sign-in page speaks it too.
@@ -685,6 +686,9 @@
   // shows the saved state.
   function showAlias(local) {
     const view = dialog(t("alias.title"));
+    // Loaded once: saving a field redraws the dialog but not the list.
+    const contacts = el("section", { class: "contacts" });
+    showContacts(local, contacts);
     const fill = () => {
       const item = state.items.find((entry) => entry.local === local);
       if (!item) return view.close();
@@ -732,15 +736,19 @@
           el("dt", {}, t("facts.forwarded")), el("dd", {}, String(item.forwarded)),
           el("dt", {}, t("facts.last")), el("dd", {}, item.last_at ? when(item.last_at) : "—"),
         ]),
+        contacts,
         el("div", { class: "modal-actions" }, [
-          el("button", {
-            type: "button",
-            class: "ghost",
-            onclick: () => {
-              view.close();
-              showMessages({ q: "", alias: item.local });
-            },
-          }, t("alias.messages")),
+          el("div", { class: "actions" }, [
+            state.mail ? el("button", { type: "button", class: "primary", onclick: () => showCompose({ alias: item.local }) }, t("compose.open")) : null,
+            el("button", {
+              type: "button",
+              class: "ghost",
+              onclick: () => {
+                view.close();
+                showMessages({ q: "", alias: item.local });
+              },
+            }, t("alias.messages")),
+          ]),
           el("button", {
             type: "button",
             class: "danger",
@@ -760,6 +768,111 @@
       ]);
     };
     fill();
+  }
+
+  // The correspondents of an alias: everyone with a reply address for it, who
+  // wrote to it or was added here. Mail from the forwarding address to a
+  // reply address goes to that correspondent from the alias, so adding one
+  // starts a conversation from the mail client.
+  async function showContacts(local, part) {
+    const item = () => state.items.find((entry) => entry.local === local) || {};
+    const head = el("h3", {}, t("contacts.title"));
+    let relays;
+    try {
+      relays = (await api("/aliases/" + encodeURIComponent(local) + "/relays")).items || [];
+    } catch (error) {
+      part.replaceChildren(head, el("p", { class: "error" }, error.message));
+      return;
+    }
+    const address = el("input", { type: "email", required: true, placeholder: "name@example.com" });
+    const name = el("input", { type: "text", maxlength: "100" });
+    const button = el("button", { class: "primary", type: "submit" }, t("contacts.add"));
+    fill(part, [
+      head,
+      el("p", { class: "muted small" }, t("contacts.hint", { owner: item().destination || state.forwardTo })),
+      relays.length ? el("ul", { class: "rows" }, relays.map((relay) => el("li", { class: "row contact" }, [
+        el("div", { class: "row-main" }, [
+          el("span", { class: "row-title" }, [
+            el("strong", {}, relay.name || relay.sender),
+            relay.name ? el("span", { class: "muted small" }, relay.sender) : null,
+          ]),
+          el("button", { type: "button", class: "address", title: t("copy"), onclick: () => copy(relay.relay) }, relay.relay),
+        ]),
+        state.mail ? el("button", { type: "button", class: "ghost", onclick: () => showCompose({ alias: local, to: relay.sender }) }, t("contacts.write")) : null,
+        el("button", {
+          type: "button",
+          class: "danger",
+          onclick: async () => {
+            if (!window.confirm(t("contacts.deleteConfirm", { address: relay.sender }))) return;
+            try {
+              await api("/relays/" + encodeURIComponent(relay.relay), { method: "DELETE" });
+              toast(t("contacts.deleted", { address: relay.sender }));
+            } catch (error) {
+              toast(error.message);
+            }
+            showContacts(local, part);
+          },
+        }, t("contacts.delete")),
+      ]))) : el("p", { class: "muted" }, t("contacts.empty")),
+      el("form", {
+        class: "contact-form",
+        onsubmit: async (event) => {
+          event.preventDefault();
+          button.disabled = true;
+          try {
+            const added = await api("/relays", { method: "POST", body: { alias: local, address: address.value.trim(), name: name.value.trim() } });
+            await copy(added.relay);
+            showContacts(local, part);
+          } catch (error) {
+            toast(error.message);
+            button.disabled = false;
+          }
+        },
+      }, [
+        el("label", {}, [t("contacts.address"), address]),
+        el("label", {}, [t("contacts.name"), name]),
+        button,
+      ]),
+    ]);
+  }
+
+  // A new plain text message from an alias. The recipient becomes a
+  // correspondent of it; the message goes to the log.
+  function showCompose(prefill) {
+    const view = dialog(t("compose.title"));
+    const items = state.items.slice().sort((a, b) => a.address.localeCompare(b.address));
+    const from = el("select", { required: true }, items.map((item) => el("option", { value: item.local, selected: item.local === prefill.alias }, item.address)));
+    const to = el("input", { type: "email", required: true, value: prefill.to || "" });
+    const subject = el("input", { type: "text", maxlength: "300" });
+    const text = el("textarea", { required: true, rows: "10" });
+    const error = el("p", { class: "error", role: "alert" });
+    const button = el("button", { class: "primary", type: "submit" }, t("compose.send"));
+    view.fill(el("form", {
+      class: "compose",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        error.textContent = "";
+        button.disabled = true;
+        try {
+          const sent = await api("/messages", { method: "POST", body: { alias: from.value, to: to.value.trim(), subject: subject.value, text: text.value } });
+          toast(t("compose.sent", { to: sent.to }));
+          view.close();
+          if (state.tab === "messages") loadMessages(false);
+        } catch (failure) {
+          error.textContent = failure.message;
+          button.disabled = false;
+        }
+      },
+    }, [
+      el("p", { class: "muted small" }, t("compose.hint")),
+      el("label", {}, [t("compose.from"), from]),
+      el("label", {}, [t("compose.to"), to]),
+      el("label", {}, [t("compose.subject"), subject]),
+      el("label", {}, [t("compose.text"), text]),
+      el("div", { class: "actions" }, [button]),
+      error,
+    ]));
+    (prefill.to ? subject : to).focus();
   }
 
   // Whether SES may send to the address; in the sandbox an address has to be
@@ -825,6 +938,7 @@
               await loadMessages(false);
             },
           }, t("messages.clear")),
+          state.mail ? el("button", { type: "button", class: "primary", onclick: () => showCompose({ alias: state.messages.alias }) }, t("compose.new")) : null,
         ]),
       ]),
       box.alias ? el("p", { class: "chips" }, el("span", { class: "chip" }, [

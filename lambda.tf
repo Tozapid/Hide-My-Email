@@ -39,6 +39,7 @@ resource "aws_lambda_function" "relay" {
       MAIL_ENABLED           = tostring(local.mail)
       MAX_ALIASES            = tostring(var.max_aliases)
       MAX_TOKENS             = tostring(var.max_tokens)
+      MAX_RELAYS             = tostring(var.max_relays)
       MAIL_BUCKET            = aws_s3_bucket.mail.id
       MAIL_PREFIX            = local.mail_prefix
       MESSAGES_PREFIX        = local.messages_prefix

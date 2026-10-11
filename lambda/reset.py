@@ -6,7 +6,7 @@
   counted back from now, so the demo always looks recent. The messages go
   through the same code as real ones: the log record, the copy, the
   attachments and the reply code, so search by a relay address works too.
-- The demo user gets the published password back, two-step sign-in off, the
+- The demo user gets the published password back, two-factor authentication off, the
   default language and is signed out everywhere; any other user is deleted.
 """
 
