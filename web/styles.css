@@ -384,40 +384,9 @@ h2 .muted { font-weight: 400; font-size: 14px; }
 
 .top .seg { margin-right: auto; }
 
-.menu { position: relative; }
-.menu summary {
-  list-style: none;
-  cursor: pointer;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  padding: 6px 10px;
-  font-size: 13px;
-  color: var(--ink);
-}
-.menu summary:hover { background: var(--surface-2); }
-.menu summary::-webkit-details-marker { display: none; }
-.menu summary .who { color: inherit; }
-.menu-items {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 6;
-  display: grid;
-  min-width: 200px;
-  padding: 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: var(--shadow-lg);
-}
-.menu-items button {
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  padding: 8px 10px;
-  text-align: left;
-}
-.menu-items button:hover { background: var(--surface-2); }
+.who { display: flex; gap: 4px; align-items: center; min-width: 0; }
+.who span { margin-right: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 
 .content {
   max-width: 960px;
@@ -612,12 +581,10 @@ dialog.modal { width: min(680px, calc(100% - 24px)); padding: 0; }
   overflow-wrap: anywhere;
 }
 
-/* The account dialog: one section after another. */
-.account-part { display: grid; gap: 10px; padding-top: 16px; border-top: 1px solid var(--line); }
-.account-part h3 { margin: 0; }
-.account-part p { margin: 0; }
-.account-part .lang-select { justify-self: start; min-width: 200px; font-size: 14px; padding: 7px 10px; }
-.account-part .note { display: grid; gap: 6px; }
+/* Settings */
+.settings-body p { margin: 0; }
+.settings-body .lang-select { justify-self: start; min-width: 200px; font-size: 14px; padding: 7px 10px; }
+.settings-body .note { display: grid; gap: 6px; }
 .pair { display: grid; gap: 10px; }
 .qr { width: auto; height: auto; justify-self: start; image-rendering: pixelated; }
 .secret { font-size: 13px; letter-spacing: 0.05em; }
@@ -628,7 +595,7 @@ dialog.modal { width: min(680px, calc(100% - 24px)); padding: 0; }
   .fields { grid-template-columns: 1fr; }
   .top { flex-wrap: wrap; padding: 8px 14px; }
   .brand span { display: none; }
-  .who { display: inline-block; max-width: 140px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+  .who span { display: none; }
   .card { padding: 14px; }
   .tools { flex-basis: 100%; }
   .tools input { flex: 1; width: auto; min-width: 0; }

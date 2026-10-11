@@ -8,6 +8,9 @@ All notable changes of the project. Newest first.
 - New favicon and BIMI logo in the shared style: a white envelope on indigo.
 - Narrow screens: the address statistics wrap instead of running off the row, the search takes the full width.
 - Deploy from a branch: a manual run of the workflow applies the branch it was started from, not only `main`, over the same demo site; the run summary names the branch and warns that the next push to `main` replaces it. Applies from different branches wait for each other.
+- CI: the jobs moved to the shared reusable workflow of [Tozapid/demo-ci-cd-skeleton](https://github.com/Tozapid/demo-ci-cd-skeleton); `.github/workflows/terraform.yml` is a short caller, the same in all three projects. The Lambda tests run by discovery (`*_test.py`), the page tests run where `tests/web` exists, the state key is `<repository>/terraform.tfstate`.
+- `main` is protected: changes go through pull requests, merged by squash once the checks `ci / Terraform format and validate`, `ci / Lambda tests` and `ci / Frontend tests` pass; merged branches are deleted.
+- Settings in tabs (Password, Two-factor authentication, Language, API keys; the demo shows only the last two), opened by a Settings button in the top bar, with Sign out as its own button beside it, as in the box inventory and the wiki. The account menu is gone.
 
 ## 2026-10-11 — comparison
 

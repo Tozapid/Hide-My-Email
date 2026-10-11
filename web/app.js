@@ -323,6 +323,7 @@
     }
     if (user) user.signOut();
     document.querySelectorAll("dialog.modal").forEach((node) => node.close());
+    document.querySelector(".dialog-wrap")?.remove();
     showLogin();
   }
 
@@ -422,7 +423,11 @@
           tabButton("aliases", t("tab.aliases")),
           tabButton("messages", t("tab.messages")),
         ]),
-        accountMenu(),
+        el("div", { class: "who" }, [
+          el("span", { title: state.email }, state.email),
+          el("button", { type: "button", class: "icon-button", onclick: () => showAccount() }, t("menu.account")),
+          el("button", { type: "button", class: "icon-button", onclick: signOut }, t("menu.signOut")),
+        ]),
       ]),
       el("main", { class: "content" }, [
         sandboxNote(),
@@ -447,17 +452,6 @@
         render();
       },
     }, title);
-  }
-
-  function accountMenu() {
-    const menu = el("details", { class: "menu" }, [
-      el("summary", {}, [el("span", { class: "who" }, state.email), " ▾"]),
-      el("div", { class: "menu-items" }, [
-        el("button", { type: "button", onclick: () => { menu.open = false; showAccount(); } }, t("menu.account")),
-        el("button", { type: "button", onclick: signOut }, t("menu.signOut")),
-      ]),
-    ]);
-    return menu;
   }
 
   function sandboxNote() {
@@ -949,47 +943,77 @@
 
   // Account ----------------------------------------------------------------
 
-  function showAccount() {
-    const view = dialog(t("account.title"));
-    const mfa = el("section", { class: "account-part" }, el("p", { class: "muted" }, t("loading")));
-    const tokens = el("section", { class: "account-part" }, el("p", { class: "muted" }, t("loading")));
-    view.fill([
-      el("p", { class: "muted" }, t("account.signedIn", { email: state.email })),
-      el("section", { class: "account-part" }, [
-        el("h3", {}, t("language.title")),
-        languagePicker(async (code) => {
+  // The settings, one tab per part. Visitors of the demo share one account:
+  // none may change its password or lock it behind their own authenticator
+  // app, so those tabs are left out there.
+  function showAccount(section) {
+    const sections = config.demo ? [] : [["password", t("password.title")], ["mfa", t("mfa.title")]];
+    sections.push(["language", t("language.title")], ["tokens", t("tokens.title")]);
+    let current = sections.some(([key]) => key === section) ? section : sections[0][0];
+    const body = el("div", { class: "settings-body" });
+    const tabs = el("div", { class: "tabs", role: "tablist" });
+    const close = () => {
+      wrap.remove();
+      document.removeEventListener("keydown", onKey);
+    };
+    const onKey = (event) => {
+      if (event.key === "Escape") close();
+    };
+    const wrap = el("div", { class: "dialog-wrap", onclick: (event) => { if (event.target === wrap) close(); } }, [
+      el("section", { class: "dialog wide", role: "dialog", "aria-modal": "true", "aria-label": t("account.title") }, [
+        el("header", { class: "dialog-head" }, [
+          el("h2", {}, t("account.title")),
+          el("button", { type: "button", class: "icon-button", onclick: close }, t("close")),
+        ]),
+        tabs,
+        body,
+      ]),
+    ]);
+    function draw() {
+      tabs.replaceChildren(...sections.map(([key, label]) => el("button", {
+        type: "button",
+        role: "tab",
+        class: key === current ? "tab active" : "tab",
+        "aria-selected": String(key === current),
+        onclick: () => {
+          current = key;
+          draw();
+        },
+      }, label)));
+      body.replaceChildren();
+      if (current === "password") body.append(passwordForm());
+      else if (current === "mfa") showMfa(body);
+      else if (current === "tokens") showTokens(body);
+      else {
+        body.append(languagePicker(async (code) => {
           await saveLanguage(code);
           // Everything on screen is redrawn in the new language.
+          close();
           render();
-          view.close();
-          showAccount();
-        }),
-      ]),
-      // Visitors of the demo share one account: none may change its password
-      // or lock it behind their own authenticator app.
-      config.demo ? null : passwordForm(),
-      config.demo ? null : mfa,
-      tokens,
-    ]);
-    if (!config.demo) showMfa(mfa);
-    showTokens(tokens);
+          showAccount("language");
+        }));
+      }
+    }
+    document.querySelector(".dialog-wrap")?.remove();
+    document.addEventListener("keydown", onKey);
+    document.body.append(wrap);
+    draw();
   }
 
   // API keys for the addy.io API at /api/v1, which Bitwarden's generator
   // calls. A new key is shown once; the API keeps only its hash.
   async function showTokens(part, created) {
-    const head = el("h3", {}, t("tokens.title"));
+    part.replaceChildren(el("p", { class: "muted" }, t("loading")));
     let items;
     try {
       items = (await api("/tokens")).items || [];
     } catch (error) {
-      part.replaceChildren(head, el("p", { class: "error" }, error.message));
+      part.replaceChildren(el("p", { class: "error" }, error.message));
       return;
     }
     const name = el("input", { type: "text", maxlength: "100", placeholder: "Bitwarden", required: true });
     const button = el("button", { class: "primary", type: "submit" }, t("tokens.create"));
     fill(part, [
-      head,
       el("p", { class: "muted small" }, t("tokens.hint", { domain: state.domain, site: location.origin })),
       el("p", { class: "muted small" }, t("tokens.addyHint", { domain: state.domain, site: location.origin })),
       created ? el("div", { class: "note" }, [
@@ -1045,7 +1069,6 @@
     const again = el("input", { type: "password", autocomplete: "new-password", required: true, minlength: "12" });
     const button = el("button", { class: "primary", type: "submit" }, t("password.submit"));
     const form = el("form", {
-      class: "account-part",
       onsubmit: async (event) => {
         event.preventDefault();
         error.textContent = "";
@@ -1065,7 +1088,6 @@
         button.disabled = false;
       },
     }, [
-      el("h3", {}, t("password.title")),
       el("label", {}, [t("password.current"), current]),
       el("label", {}, [t("password.new"), next]),
       el("label", {}, [t("password.again"), again]),
@@ -1079,18 +1101,18 @@
   // Two-factor sign-in with an authenticator app (TOTP): Cognito gives a
   // secret, the app shows codes, one code confirms the pairing.
   async function showMfa(part) {
-    const head = el("h3", {}, t("mfa.title"));
+    part.replaceChildren(el("p", { class: "muted" }, t("loading")));
     let enabled;
     try {
       const { user } = await currentUser();
       const data = await cognito((done) => user.getUserData(done, { bypassCache: true }));
       enabled = (data.UserMFASettingList || []).includes("SOFTWARE_TOKEN_MFA");
     } catch (error) {
-      part.replaceChildren(head, el("p", { class: "error" }, authMessage(error)));
+      part.replaceChildren(el("p", { class: "error" }, authMessage(error)));
       return;
     }
     if (enabled) {
-      part.replaceChildren(head,
+      part.replaceChildren(
         el("p", {}, [el("span", { class: "badge ok" }, t("mfa.on")), t("mfa.onText")]),
         el("div", { class: "actions" }, el("button", {
           type: "button",
@@ -1109,12 +1131,12 @@
         }, t("mfa.disable"))));
       return;
     }
-    part.replaceChildren(head,
+    part.replaceChildren(
       el("p", { class: "muted" }, t("mfa.offText")),
-      el("div", { class: "actions" }, el("button", { type: "button", class: "primary", onclick: () => pairApp(part, head) }, t("mfa.enable"))));
+      el("div", { class: "actions" }, el("button", { type: "button", class: "primary", onclick: () => pairApp(part) }, t("mfa.enable"))));
   }
 
-  async function pairApp(part, head) {
+  async function pairApp(part) {
     let user;
     let secret;
     try {
@@ -1134,7 +1156,7 @@
     const error = el("p", { class: "error", role: "alert" });
     const code = el("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", pattern: "[0-9]{6}", maxlength: "6", required: true });
     const button = el("button", { class: "primary", type: "submit" }, t("mfa.submit"));
-    part.replaceChildren(head, el("form", {
+    part.replaceChildren(el("form", {
       class: "pair",
       onsubmit: async (event) => {
         event.preventDefault();
