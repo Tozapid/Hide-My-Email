@@ -1,0 +1,93 @@
+{
+  "aliases": [
+    {
+      "local": "quiet-river-42",
+      "comment": "Online shop",
+      "created_minutes_ago": 43200,
+      "sender_name": "Alex"
+    },
+    {
+      "local": "bright-falcon-17",
+      "comment": "Newsletter: weekly digest",
+      "created_minutes_ago": 20160
+    },
+    {
+      "local": "calm-harbor-63",
+      "comment": "Bank statements",
+      "created_minutes_ago": 10080,
+      "forward_to": "work@example.org"
+    },
+    {
+      "local": "swift-otter-28",
+      "comment": "Forum sign-up, switched off after the spam started",
+      "created_minutes_ago": 7200,
+      "active": false
+    },
+    {
+      "local": "travel",
+      "comment": "Flights and hotels",
+      "created_minutes_ago": 2880,
+      "pinned": true
+    }
+  ],
+  "messages": [
+    {
+      "alias": "quiet-river-42",
+      "minutes_ago": 2900,
+      "from": "Example Shop <orders@shop.example>",
+      "subject": "Your order #1024 is confirmed",
+      "text": "Hello,\n\nthank you for your order #1024.\n\n1 x Desk lamp, 29.90 EUR\n1 x Spare bulb, 4.50 EUR\n\nTotal: 34.40 EUR\n\nThe invoice is attached.\n\nExample Shop",
+      "attachments": [
+        {
+          "name": "invoice-1024.csv",
+          "type": "text/csv",
+          "content": "item,quantity,price\nDesk lamp,1,29.90\nSpare bulb,1,4.50\nTotal,,34.40\n"
+        }
+      ]
+    },
+    {
+      "alias": "quiet-river-42",
+      "minutes_ago": 2700,
+      "direction": "out",
+      "from": "Example Shop <orders@shop.example>",
+      "subject": "Re: Your order #1024 is confirmed",
+      "text": "Hello,\n\ncould you ship it to the office address instead?\n\nThanks,\nAlex"
+    },
+    {
+      "alias": "quiet-river-42",
+      "minutes_ago": 1500,
+      "from": "Example Shop <orders@shop.example>",
+      "subject": "Order #1024 has shipped",
+      "html": "<html><body><h1>On its way</h1><p>Your order <b>#1024</b> left our warehouse.</p><p>Tracking number: <b>EX123456789</b></p><img src=\"https://tracker.shop.example/pixel.gif\" alt=\"\"></body></html>"
+    },
+    {
+      "alias": "bright-falcon-17",
+      "minutes_ago": 300,
+      "from": "Weekly Digest <news@digest.example>",
+      "subject": "This week: five things worth reading",
+      "html": "<html><body><h2>This week</h2><ol><li>Why your inbox needs aliases</li><li>Reading email without trackers</li><li>Passwords and passkeys</li><li>Backups that work</li><li>A short history of spam</li></ol><p><a href=\"https://digest.example/unsubscribe\">Unsubscribe</a></p></body></html>"
+    },
+    {
+      "alias": "calm-harbor-63",
+      "minutes_ago": 60,
+      "from": "Example Bank <statements@bank.example>",
+      "subject": "Your monthly statement",
+      "text": "Dear customer,\n\nyour statement for last month is attached.\n\nExample Bank",
+      "attachments": [
+        {
+          "name": "statement.txt",
+          "type": "text/plain",
+          "content": "Opening balance  1,200.00\nIncoming           850.00\nOutgoing          -430.15\nClosing balance  1,619.85\n"
+        }
+      ]
+    },
+    {
+      "alias": "swift-otter-28",
+      "minutes_ago": 7100,
+      "from": "Cheap Pills <win@spam.example>",
+      "subject": "You have won!!!",
+      "text": "Click here to claim your prize.",
+      "spam": true
+    }
+  ]
+}
