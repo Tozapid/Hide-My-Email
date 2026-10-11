@@ -164,7 +164,7 @@
     const node = el("dialog", { class: "modal" }, [
       el("div", { class: "modal-head" }, [
         el("h2", {}, title),
-        el("button", { type: "button", class: "ghost close", "aria-label": t("close"), onclick: () => node.close() }, "×"),
+        el("button", { type: "button", class: "icon-button close", "aria-label": t("close"), onclick: () => node.close() }, "×"),
       ]),
       body,
     ]);
@@ -222,7 +222,7 @@
 
   function loginCard(children, onsubmit) {
     root.replaceChildren(el("main", { class: "login" }, el("form", {
-      class: "card",
+      class: "login-card",
       onsubmit: (event) => {
         event.preventDefault();
         onsubmit();
@@ -241,7 +241,7 @@
 
   // The language menu of the sign-in page and of the account settings.
   function languagePicker(onchange) {
-    return el("select", { "aria-label": t("language.title"), onchange: (event) => onchange(event.target.value) },
+    return el("select", { class: "lang-select", "aria-label": t("language.title"), onchange: (event) => onchange(event.target.value) },
       i18n.languages.map(([code, name]) => el("option", { value: code, selected: code === language }, name)));
   }
 
@@ -251,22 +251,23 @@
     const email = el("input", { type: "email", autocomplete: "username", required: true, value: demo.email || "" });
     const password = el("input", { type: "password", autocomplete: "current-password", required: true, value: demo.password || "" });
     loginCard([
-      el("div", { class: "login-head" }, [
-        el("h1", {}, "Hide My Email"),
+      el("img", { class: "login-mark", src: "/favicon.svg", alt: "" }),
+      el("h1", {}, "Hide My Email"),
+      demo.email ? el("p", { class: "demo-note" }, [
+        t("demo.signIn", { email: demo.email, password: demo.password }),
+        demo.reset ? " " + t("demo.reset") : "",
+      ]) : null,
+      el("label", {}, [t("login.email"), email]),
+      el("label", {}, [t("login.password"), password]),
+      el("button", { class: "primary", type: "submit" }, t("login.signIn")),
+      error,
+      el("div", { class: "login-lang" }, [
+        el("a", { href: REPOSITORY, rel: "noopener" }, t("login.source")),
         languagePicker((code) => {
           setLanguage(code);
           showLogin();
         }),
       ]),
-      el("label", {}, [t("login.email"), email]),
-      el("label", {}, [t("login.password"), password]),
-      el("button", { class: "primary", type: "submit" }, t("login.signIn")),
-      error,
-      demo.email ? el("p", { class: "demo-note" }, [
-        t("demo.signIn", { email: demo.email, password: demo.password }),
-        demo.reset ? " " + t("demo.reset") : "",
-      ]) : null,
-      el("p", { class: "source" }, el("a", { href: REPOSITORY, rel: "noopener" }, t("login.source"))),
     ].filter(Boolean), () => {
       error.textContent = "";
       const user = new window.AmazonCognitoIdentity.CognitoUser({ Username: email.value.trim(), Pool: userPool() });
@@ -283,7 +284,7 @@
     const password = el("input", { type: "password", autocomplete: "new-password", required: true, minlength: "12" });
     loginCard([
       el("h1", {}, t("newPassword.title")),
-      el("p", { class: "muted" }, t("newPassword.hint")),
+      el("p", { class: "lede" }, t("newPassword.hint")),
       el("label", {}, [t("password.new"), password]),
       el("button", { class: "primary", type: "submit" }, t("newPassword.submit")),
       error,
@@ -298,7 +299,7 @@
     const code = el("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", pattern: "[0-9]{6}", maxlength: "6", required: true });
     loginCard([
       el("h1", {}, t("totp.title")),
-      el("p", { class: "muted" }, t("totp.hint")),
+      el("p", { class: "lede" }, t("totp.hint")),
       el("label", {}, [t("totp.code"), code]),
       el("button", { class: "primary", type: "submit" }, t("login.signIn")),
       error,
@@ -322,6 +323,7 @@
     }
     if (user) user.signOut();
     document.querySelectorAll("dialog.modal").forEach((node) => node.close());
+    document.querySelector(".dialog-wrap")?.remove();
     showLogin();
   }
 
@@ -416,12 +418,16 @@
   function render() {
     root.replaceChildren(el("div", { class: "app" }, [
       el("header", { class: "top" }, [
-        el("div", { class: "brand" }, [el("strong", {}, "Hide My Email"), el("span", {}, state.domains.includes(location.hostname) ? location.hostname : state.domain)]),
-        el("nav", { class: "tabs" }, [
+        el("div", { class: "brand" }, [el("img", { class: "brand-mark", src: "/favicon.svg", alt: "" }), el("strong", {}, "Hide My Email"), el("span", {}, state.domains.includes(location.hostname) ? location.hostname : state.domain)]),
+        el("nav", { class: "seg" }, [
           tabButton("aliases", t("tab.aliases")),
           tabButton("messages", t("tab.messages")),
         ]),
-        accountMenu(),
+        el("div", { class: "who" }, [
+          el("span", { title: state.email }, state.email),
+          el("button", { type: "button", class: "icon-button", onclick: () => showAccount() }, t("menu.account")),
+          el("button", { type: "button", class: "icon-button", onclick: signOut }, t("menu.signOut")),
+        ]),
       ]),
       el("main", { class: "content" }, [
         sandboxNote(),
@@ -439,24 +445,13 @@
   function tabButton(tab, title) {
     return el("button", {
       type: "button",
-      class: "tab" + (state.tab === tab ? " current" : ""),
+      class: state.tab === tab ? "active" : null,
       "aria-current": state.tab === tab ? "page" : null,
       onclick: () => {
         state.tab = tab;
         render();
       },
     }, title);
-  }
-
-  function accountMenu() {
-    const menu = el("details", { class: "menu" }, [
-      el("summary", {}, [el("span", { class: "who" }, state.email), " ▾"]),
-      el("div", { class: "menu-items" }, [
-        el("button", { type: "button", onclick: () => { menu.open = false; showAccount(); } }, t("menu.account")),
-        el("button", { type: "button", onclick: signOut }, t("menu.signOut")),
-      ]),
-    ]);
-    return menu;
   }
 
   function sandboxNote() {
@@ -777,7 +772,7 @@
       t(value === "pending" ? "dest.pending" : "dest.none"),
       el("button", {
         type: "button",
-        class: "link",
+        class: "link-button",
         onclick: async () => {
           try {
             await api("/destinations", { method: "POST", body: { address } });
@@ -836,7 +831,7 @@
         t("messages.aliasFilter", { address: (state.items.find((item) => item.local === box.alias) || {}).address || box.alias }),
         el("button", {
           type: "button",
-          class: "link",
+          class: "link-button",
           "aria-label": t("messages.removeFilter"),
           onclick: () => {
             box.alias = "";
@@ -948,47 +943,77 @@
 
   // Account ----------------------------------------------------------------
 
-  function showAccount() {
-    const view = dialog(t("account.title"));
-    const mfa = el("section", { class: "account-part" }, el("p", { class: "muted" }, t("loading")));
-    const tokens = el("section", { class: "account-part" }, el("p", { class: "muted" }, t("loading")));
-    view.fill([
-      el("p", { class: "muted" }, t("account.signedIn", { email: state.email })),
-      el("section", { class: "account-part" }, [
-        el("h3", {}, t("language.title")),
-        languagePicker(async (code) => {
+  // The settings, one tab per part. Visitors of the demo share one account:
+  // none may change its password or lock it behind their own authenticator
+  // app, so those tabs are left out there.
+  function showAccount(section) {
+    const sections = config.demo ? [] : [["password", t("password.title")], ["mfa", t("mfa.title")]];
+    sections.push(["language", t("language.title")], ["tokens", t("tokens.title")]);
+    let current = sections.some(([key]) => key === section) ? section : sections[0][0];
+    const body = el("div", { class: "settings-body" });
+    const tabs = el("div", { class: "tabs", role: "tablist" });
+    const close = () => {
+      wrap.remove();
+      document.removeEventListener("keydown", onKey);
+    };
+    const onKey = (event) => {
+      if (event.key === "Escape") close();
+    };
+    const wrap = el("div", { class: "dialog-wrap", onclick: (event) => { if (event.target === wrap) close(); } }, [
+      el("section", { class: "dialog wide", role: "dialog", "aria-modal": "true", "aria-label": t("account.title") }, [
+        el("header", { class: "dialog-head" }, [
+          el("h2", {}, t("account.title")),
+          el("button", { type: "button", class: "icon-button", onclick: close }, t("close")),
+        ]),
+        tabs,
+        body,
+      ]),
+    ]);
+    function draw() {
+      tabs.replaceChildren(...sections.map(([key, label]) => el("button", {
+        type: "button",
+        role: "tab",
+        class: key === current ? "tab active" : "tab",
+        "aria-selected": String(key === current),
+        onclick: () => {
+          current = key;
+          draw();
+        },
+      }, label)));
+      body.replaceChildren();
+      if (current === "password") body.append(passwordForm());
+      else if (current === "mfa") showMfa(body);
+      else if (current === "tokens") showTokens(body);
+      else {
+        body.append(languagePicker(async (code) => {
           await saveLanguage(code);
           // Everything on screen is redrawn in the new language.
+          close();
           render();
-          view.close();
-          showAccount();
-        }),
-      ]),
-      // Visitors of the demo share one account: none may change its password
-      // or lock it behind their own authenticator app.
-      config.demo ? null : passwordForm(),
-      config.demo ? null : mfa,
-      tokens,
-    ]);
-    if (!config.demo) showMfa(mfa);
-    showTokens(tokens);
+          showAccount("language");
+        }));
+      }
+    }
+    document.querySelector(".dialog-wrap")?.remove();
+    document.addEventListener("keydown", onKey);
+    document.body.append(wrap);
+    draw();
   }
 
   // API keys for the addy.io API at /api/v1, which Bitwarden's generator
   // calls. A new key is shown once; the API keeps only its hash.
   async function showTokens(part, created) {
-    const head = el("h3", {}, t("tokens.title"));
+    part.replaceChildren(el("p", { class: "muted" }, t("loading")));
     let items;
     try {
       items = (await api("/tokens")).items || [];
     } catch (error) {
-      part.replaceChildren(head, el("p", { class: "error" }, error.message));
+      part.replaceChildren(el("p", { class: "error" }, error.message));
       return;
     }
     const name = el("input", { type: "text", maxlength: "100", placeholder: "Bitwarden", required: true });
     const button = el("button", { class: "primary", type: "submit" }, t("tokens.create"));
     fill(part, [
-      head,
       el("p", { class: "muted small" }, t("tokens.hint", { domain: state.domain, site: location.origin })),
       el("p", { class: "muted small" }, t("tokens.addyHint", { domain: state.domain, site: location.origin })),
       created ? el("div", { class: "note" }, [
@@ -1044,7 +1069,6 @@
     const again = el("input", { type: "password", autocomplete: "new-password", required: true, minlength: "12" });
     const button = el("button", { class: "primary", type: "submit" }, t("password.submit"));
     const form = el("form", {
-      class: "account-part",
       onsubmit: async (event) => {
         event.preventDefault();
         error.textContent = "";
@@ -1064,7 +1088,6 @@
         button.disabled = false;
       },
     }, [
-      el("h3", {}, t("password.title")),
       el("label", {}, [t("password.current"), current]),
       el("label", {}, [t("password.new"), next]),
       el("label", {}, [t("password.again"), again]),
@@ -1078,18 +1101,18 @@
   // Two-factor sign-in with an authenticator app (TOTP): Cognito gives a
   // secret, the app shows codes, one code confirms the pairing.
   async function showMfa(part) {
-    const head = el("h3", {}, t("mfa.title"));
+    part.replaceChildren(el("p", { class: "muted" }, t("loading")));
     let enabled;
     try {
       const { user } = await currentUser();
       const data = await cognito((done) => user.getUserData(done, { bypassCache: true }));
       enabled = (data.UserMFASettingList || []).includes("SOFTWARE_TOKEN_MFA");
     } catch (error) {
-      part.replaceChildren(head, el("p", { class: "error" }, authMessage(error)));
+      part.replaceChildren(el("p", { class: "error" }, authMessage(error)));
       return;
     }
     if (enabled) {
-      part.replaceChildren(head,
+      part.replaceChildren(
         el("p", {}, [el("span", { class: "badge ok" }, t("mfa.on")), t("mfa.onText")]),
         el("div", { class: "actions" }, el("button", {
           type: "button",
@@ -1108,12 +1131,12 @@
         }, t("mfa.disable"))));
       return;
     }
-    part.replaceChildren(head,
+    part.replaceChildren(
       el("p", { class: "muted" }, t("mfa.offText")),
-      el("div", { class: "actions" }, el("button", { type: "button", class: "primary", onclick: () => pairApp(part, head) }, t("mfa.enable"))));
+      el("div", { class: "actions" }, el("button", { type: "button", class: "primary", onclick: () => pairApp(part) }, t("mfa.enable"))));
   }
 
-  async function pairApp(part, head) {
+  async function pairApp(part) {
     let user;
     let secret;
     try {
@@ -1133,7 +1156,7 @@
     const error = el("p", { class: "error", role: "alert" });
     const code = el("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", pattern: "[0-9]{6}", maxlength: "6", required: true });
     const button = el("button", { class: "primary", type: "submit" }, t("mfa.submit"));
-    part.replaceChildren(head, el("form", {
+    part.replaceChildren(el("form", {
       class: "pair",
       onsubmit: async (event) => {
         event.preventDefault();

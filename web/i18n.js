@@ -53,7 +53,7 @@ window.HIDE_MY_EMAIL_I18N = {
 
       "tab.aliases": "Addresses",
       "tab.messages": "Messages",
-      "menu.account": "Account settings",
+      "menu.account": "Settings",
       "menu.signOut": "Sign out",
       "sandbox.title": "SES is in the sandbox. ",
       "sandbox.text": "Mail is forwarded only to verified addresses (“verify” next to the forwarding address), and replies from aliases are not sent. To lift the limits, request production access in the SES console for this region.",
@@ -148,8 +148,7 @@ window.HIDE_MY_EMAIL_I18N = {
       "message.deleteConfirm": "Delete the message from the log, together with its stored copy?",
       "message.deleted": "Message deleted",
 
-      "account.title": "Account settings",
-      "account.signedIn": "Signed in as {email}",
+      "account.title": "Settings",
       "language.title": "Language",
       "language.saved": "Language saved",
       "password.title": "Password",
@@ -254,7 +253,7 @@ window.HIDE_MY_EMAIL_I18N = {
 
       "tab.aliases": "Адреса",
       "tab.messages": "Письма",
-      "menu.account": "Настройки аккаунта",
+      "menu.account": "Настройки",
       "menu.signOut": "Выйти",
       "sandbox.title": "SES в песочнице. ",
       "sandbox.text": "Письма пересылаются только на подтверждённые адреса (у адреса пересылки — «подтвердить»), ответы с псевдонимов не уходят. Чтобы снять ограничения, запросите production access в консоли SES для этого региона.",
@@ -349,8 +348,7 @@ window.HIDE_MY_EMAIL_I18N = {
       "message.deleteConfirm": "Удалить письмо из лога вместе с сохранённой копией?",
       "message.deleted": "Письмо удалено",
 
-      "account.title": "Настройки аккаунта",
-      "account.signedIn": "Вход: {email}",
+      "account.title": "Настройки",
       "language.title": "Язык",
       "language.saved": "Язык сохранён",
       "password.title": "Пароль",
@@ -455,7 +453,7 @@ window.HIDE_MY_EMAIL_I18N = {
 
       "tab.aliases": "Adresses",
       "tab.messages": "Messages",
-      "menu.account": "Paramètres du compte",
+      "menu.account": "Paramètres",
       "menu.signOut": "Se déconnecter",
       "sandbox.title": "SES est en mode sandbox. ",
       "sandbox.text": "Les messages ne sont transférés qu’aux adresses vérifiées (« vérifier » à côté de l’adresse de transfert) et les réponses depuis les alias ne partent pas. Pour lever ces limites, demandez l’accès production dans la console SES de cette région.",
@@ -550,8 +548,7 @@ window.HIDE_MY_EMAIL_I18N = {
       "message.deleteConfirm": "Supprimer le message du journal, avec sa copie enregistrée ?",
       "message.deleted": "Message supprimé",
 
-      "account.title": "Paramètres du compte",
-      "account.signedIn": "Connecté en tant que {email}",
+      "account.title": "Paramètres",
       "language.title": "Langue",
       "language.saved": "Langue enregistrée",
       "password.title": "Mot de passe",
@@ -656,7 +653,7 @@ window.HIDE_MY_EMAIL_I18N = {
 
       "tab.aliases": "Indirizzi",
       "tab.messages": "Messaggi",
-      "menu.account": "Impostazioni account",
+      "menu.account": "Impostazioni",
       "menu.signOut": "Esci",
       "sandbox.title": "SES è in modalità sandbox. ",
       "sandbox.text": "I messaggi vengono inoltrati solo agli indirizzi verificati («verifica» accanto all’indirizzo di inoltro) e le risposte dagli alias non partono. Per togliere i limiti, richiedi l’accesso production nella console SES di questa regione.",
@@ -751,8 +748,7 @@ window.HIDE_MY_EMAIL_I18N = {
       "message.deleteConfirm": "Eliminare il messaggio dal registro, con la copia salvata?",
       "message.deleted": "Messaggio eliminato",
 
-      "account.title": "Impostazioni account",
-      "account.signedIn": "Accesso come {email}",
+      "account.title": "Impostazioni",
       "language.title": "Lingua",
       "language.saved": "Lingua salvata",
       "password.title": "Password",
