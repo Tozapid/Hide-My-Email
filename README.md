@@ -6,7 +6,7 @@ Everything is Terraform and AWS managed services; the logic is one Python Lambda
 
 ## Demo
 
-**https://dkvhfbgof6jkv.cloudfront.net**
+**<https://dkvhfbgof6jkv.cloudfront.net>**
 
 Sign in with `demo@example.com` / `Demo-Password-1` (the fields are filled in for you).
 
