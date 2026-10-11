@@ -2,6 +2,13 @@
 
 All notable changes of the project. Newest first.
 
+## 2026-10-12 — correspondents and new messages
+
+- Correspondents in the dialog of an alias: everyone with a reply address for it, who wrote or was added. Adding one makes their reply address at once; mail to it from the forwarding address goes to them from the alias, so a conversation can start from your mail client. API: `GET /api/aliases/<name>/relays`, `POST /api/relays`, `DELETE /api/relays/<reply address>`.
+- A new plain text message from the page (`POST /api/messages`): from an alias to anyone; the recipient becomes a correspondent, the message goes to the log.
+- Without mail (the demo) correspondents can still be added, nothing is sent: the buttons to write are hidden and the API answers `mail_disabled`. `max_relays` (200) caps the correspondents visitors add.
+- "Two-step sign-in" is called two-factor authentication everywhere, as on the page.
+
 ## 2026-10-12 — no Terraform lock file
 
 - `.terraform.lock.hcl` is no longer kept in the repository (it is in `.gitignore`): `terraform init` takes the newest AWS provider within the constraint in `terraform.tf`.

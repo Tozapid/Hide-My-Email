@@ -13,7 +13,7 @@ variable "name" {
 variable "demo" {
   type        = bool
   default     = true
-  description = "Public demo: the sign-in screen shows and fills in the demo sign-in, and the account settings hide the password and two-step sign-in."
+  description = "Public demo: the sign-in screen shows and fills in the demo sign-in, and the account settings hide the password and two-factor authentication."
 }
 
 variable "domains" {
@@ -83,6 +83,12 @@ variable "max_tokens" {
   type        = number
   default     = 20
   description = "Most API keys at once; 0 for no limit."
+}
+
+variable "max_relays" {
+  type        = number
+  default     = 200
+  description = "Most correspondents (reply addresses) a visitor can add on the page; 0 for no limit."
 }
 
 variable "mail_retention_days" {

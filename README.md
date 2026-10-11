@@ -10,17 +10,19 @@ Everything is Terraform and AWS managed services; the logic is one Python Lambda
 
 Sign in with `demo@example.com` / `Demo-Password-1` (the fields are filled in for you).
 
-The demo has **no mail**: it neither receives nor sends a single message. Everything else works on example data — create, edit, switch off, pin and delete aliases, sort and search them, read the example messages with their attachments, make an API key and create aliases with it (for example from Bitwarden), switch the language. The demo is public and goes back to its initial state **every hour**: aliases, API keys and the message log are wiped, the examples of [`seed/seed.json`](seed/seed.json) are written again, the demo password is put back and any other user is deleted. Changing the password and two-step sign-in are hidden in the demo, so no visitor can lock the others out.
+The demo has **no mail**: it neither receives nor sends a single message. Everything else works on example data — create, edit, switch off, pin and delete aliases, sort and search them, read the example messages with their attachments, add correspondents to an alias and get their reply addresses, make an API key and create aliases with it (for example from Bitwarden), switch the language. The demo is public and goes back to its initial state **every hour**: aliases, API keys and the message log are wiped, the examples of [`seed/seed.json`](seed/seed.json) are written again, the demo password is put back and any other user is deleted. Changing the password and two-factor authentication are hidden in the demo, so no visitor can lock the others out.
 
 ## Features
 
 - **Aliases** like `quiet-river-42@hide.example.com` or a name of your own, each with a comment, its own forwarding address (or the default one), its own sender name for replies, on/off, pinned. Sorted by creation date, comment, last message or number of messages; search by address, comment, forwarding address or a relay address.
 - **Forwarding** from a relay address that shows who wrote, as Apple does: mail from `office@shop.example` arrives from `office_at_shop_example_<code>@hide.example.com`, with the sender's name as the display name.
 - **Replies** to the relay address go back to the original sender from the alias. Your personal address is taken out of the quoted text and the headers, copies (`Cc`) are not sent, and only your own mailbox may reply (SES must see DMARC, or SPF, pass).
-- **Message log**: every forwarded message and every reply, kept until you delete it. Messages are shown as text only (HTML is converted, so no script runs and no tracker loads); attachments are downloaded through CloudFront with a signed cookie.
+- **Correspondents and new conversations**: the dialog of an alias lists everyone with a reply address for it, who wrote or whom you added. Adding someone (`bob@shop.example`) makes their reply address (`bob_at_shop_example_<code>@hide.example.com`) at once: mail to it from your forwarding address goes to them from the alias, so a conversation can start from your own mail client.
+- **New message from the page**: from an alias, to anyone, a subject and plain text (no attachments). The recipient becomes a correspondent of the alias and the message goes to the log.
+- **Message log**: every forwarded message, every reply and every new message, kept until you delete it. Messages are shown as text only (HTML is converted, so no script runs and no tracker loads); attachments are downloaded through CloudFront with a signed cookie.
 - **Several domains**: each with its own SES identity, DKIM, MAIL FROM, DMARC, BIMI, certificate and copy of the page.
 - **API** compatible with [addy.io](https://app.addy.io/docs/): the Bitwarden username generator and the addy.io browser extension create and manage aliases with a personal API key.
-- **Account**: two-step sign-in with an authenticator app (TOTP), password change, API keys, interface in English, Russian, French and Italian.
+- **Account**: two-factor authentication with an authenticator app (TOTP), password change, API keys, interface in English, Russian, French and Italian.
 
 ## Compared with other services
 
@@ -34,6 +36,7 @@ Apple Hide My Email, SimpleLogin and addy.io solve the same problem well; the di
 | 🔁 **Addresses survive a change of provider** | ✅ Yes: move the MX, keep every address | ⚠️ Only with your own domain |
 | ♾️ **Number of aliases** | ✅ Unlimited (optional cap) | ⚠️ Often limited on free plans |
 | ↩️ **Reply from the alias** | ✅ Yes, relay addresses show the sender | ✅ Yes |
+| ✍️ **Start a conversation from the alias** | ✅ Yes, from the page or from your mail client through a reply address | ⚠️ Some services (reverse aliases, often paid) |
 | 💰 **Price** | ✅ AWS usage, about $0.75 a month ([Cost](#cost)) | 💳 A subscription for anything beyond the free plan |
 | 📖 **Open source, self-hostable** | ✅ MIT, one `terraform apply` | ⚠️ Some of them |
 | 🖥️ **Servers to run** | ✅ None: serverless, nothing to patch | ⚠️ A server to maintain, if self-hosted |
@@ -49,7 +52,7 @@ What you get by running it yourself:
 - 🕵️ **Nobody in the middle.** Mail passes only through AWS services in your account and region: no company between you and your mail reads, profiles or can lose it, and there is no account of yours on another service to be breached or closed.
 - 🔒 **Encryption and private storage.** TLS on every hop that the sending server supports (SES receiving takes TLS, SES sending uses it whenever the receiving server does), HTTPS only on the page and the API, S3 server-side encryption for stored mail and attachments, DynamoDB encryption at rest, the attachment signing key as an SSM SecureString. Buckets are private and readable only by the stack's CloudFront distributions; API keys are stored as SHA-256 hashes.
 - 🧱 **A small, auditable attack surface.** No servers or containers to patch: managed services, one Python function without dependencies, least-privilege IAM roles, a strict content security policy with pinned scripts, a page that never renders a message's HTML. Deploys use GitHub OIDC with no long-lived AWS keys.
-- 🔑 **Strong sign-in.** Cognito with no self sign-up, optional two-step sign-in with an authenticator app, short-lived tokens.
+- 🔑 **Strong sign-in.** Cognito with no self sign-up, optional two-factor authentication with an authenticator app, short-lived tokens.
 - ✉️ **Aligned authentication.** SPF, DKIM and DMARC of your own domain, BIMI with your logo (see [Deliverability and spam](#deliverability-and-spam)).
 - 💸 **It costs cents.** Pay-per-use AWS pricing, mostly within the free allowances.
 
@@ -95,9 +98,9 @@ A reply code is 12 characters of a SHA-256 of "alias + sender", so one sender al
 The defaults deploy the **test environment**, the public demo above. It is the same code with mail turned off:
 
 - no domains: nothing is created in SES, no DNS is touched, no MX points anywhere; the page answers at its `*.cloudfront.net` address with CloudFront's certificate;
-- aliases show the placeholder domain `demo_domain` (`hide.example.com`), and the API answers `mail_disabled` where mail would be needed (verifying a forwarding address);
-- the sign-in is published and filled in (`demo = true`), password change and two-step sign-in are hidden;
-- the hourly reset (`reset_schedule`) rebuilds everything from `seed/seed.json`, and `max_aliases` / `max_tokens` keep visitors from filling the table;
+- aliases show the placeholder domain `demo_domain` (`hide.example.com`), and the API answers `mail_disabled` where mail would be needed (verifying a forwarding address, sending a new message); correspondents can still be added;
+- the sign-in is published and filled in (`demo = true`), password change and two-factor authentication are hidden;
+- the hourly reset (`reset_schedule`) rebuilds everything from `seed/seed.json`, and `max_aliases` / `max_tokens` / `max_relays` keep visitors from filling the table;
 - point-in-time recovery is off and the buckets are deleted with their content on `terraform destroy`.
 
 **Production** turns mail on by listing domains. Start from [`examples/production.tfvars`](examples/production.tfvars):
@@ -112,7 +115,7 @@ The defaults deploy the **test environment**, the public demo above. It is the s
 | `admin_email` | `demo@example.com` | your address |
 | `admin_password` | `Demo-Password-1` | `""` — Cognito mails a temporary password |
 | `reset_schedule` | `rate(1 hour)` | `""` — no reset, no examples |
-| `max_aliases`, `max_tokens` | `100`, `20` | `0` — no limit |
+| `max_aliases`, `max_tokens`, `max_relays` | `100`, `20`, `200` | `0` — no limit |
 
 Steps to production:
 
@@ -196,7 +199,7 @@ curl -s https://<your page>/api/v1/aliases -H "Authorization: Bearer $HME_KEY" \
   -H "Content-Type: application/json" -d '{"domain": "hide.example.com", "description": "shop.example"}'
 ```
 
-The API of the page (`/api/*`, Cognito token) is in [`lambda/hide_my_email.py`](lambda/hide_my_email.py); its errors carry a code that the page translates ([`web/i18n.js`](web/i18n.js)).
+The API of the page (`/api/*`, Cognito token) is in [`lambda/hide_my_email.py`](lambda/hide_my_email.py); its errors carry a code that the page translates ([`web/i18n.js`](web/i18n.js)). Correspondents: `GET /api/aliases/<name>/relays`, `POST /api/relays` (`alias`, `address`, `name`), `DELETE /api/relays/<reply address>`. A new message: `POST /api/messages` (`alias`, `to`, `subject`, `text`, up to 100,000 characters).
 
 ## Deliverability and spam
 
@@ -273,11 +276,12 @@ On fake S3, DynamoDB, SES, SSM and Cognito: forwarding and replies on several do
 
 ## Limitations
 
-- You can only reply to people who wrote to the alias first; a conversation cannot be started from an alias.
+- A new message from the page is plain text without attachments; one with attachments goes from your mail client to the correspondent's reply address.
+- Reply addresses take mail only from the forwarding address of the alias.
 - The quoted text of a reply loses your address, not your name: "John Smith <…> wrote" still shows the name.
 - SES accepts messages up to 40 MB.
 - Forwarding addresses verified from the page are SES identities outside Terraform; they stay after `terraform destroy`.
-- Two-step sign-in is TOTP only; a lost authenticator is reset in the Cognito console.
+- Two-factor authentication is TOTP only; a lost authenticator is reset in the Cognito console.
 - No addy.io labels.
 
 ## License
