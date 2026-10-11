@@ -2,6 +2,10 @@
 
 All notable changes of the project. Newest first.
 
+## 2026-10-11 — comparison
+
+- README: a comparison with Apple Hide My Email, SimpleLogin and addy.io, what running it yourself gives (own domain, nobody in the middle, encryption, a small attack surface) and what the services do better.
+
 ## 2026-10-11 — first public version
 
 - Disposable aliases on own domains with forwarding through SES, replies from the alias through relay addresses that show the sender (`office_at_shop_example_<code>@…`), and a message log with attachments served by CloudFront behind a signed cookie.
