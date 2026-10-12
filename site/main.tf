@@ -85,6 +85,17 @@ resource "aws_cloudfront_distribution" "this" {
     domain_name = var.origins.api_domain
     origin_id   = "api"
 
+    # The API does not see the host the page was asked on; the Web Key
+    # Directory of the function needs it to serve the keys of this domain.
+    # Without a domain (the demo) the function takes the one of its aliases.
+    dynamic "custom_header" {
+      for_each = var.web_key_directory && var.domain != null ? [var.domain] : []
+      content {
+        name  = "X-Hide-My-Email-Site"
+        value = custom_header.value
+      }
+    }
+
     custom_origin_config {
       http_port                = 80
       https_port               = 443
@@ -128,6 +139,22 @@ resource "aws_cloudfront_distribution" "this" {
     compress                 = true
     cache_policy_id          = var.policies.caching_disabled_id
     origin_request_policy_id = var.policies.all_viewer_except_host_id
+  }
+
+  # The Web Key Directory (direct method): the OpenPGP keys of the aliases of
+  # this domain, which mail clients look up by address to check signatures.
+  dynamic "ordered_cache_behavior" {
+    for_each = var.web_key_directory ? ["/.well-known/openpgpkey/*"] : []
+    content {
+      path_pattern             = ordered_cache_behavior.value
+      target_origin_id         = "api"
+      allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+      cached_methods           = ["GET", "HEAD"]
+      viewer_protocol_policy   = "redirect-to-https"
+      compress                 = false
+      cache_policy_id          = var.policies.caching_disabled_id
+      origin_request_policy_id = var.policies.all_viewer_except_host_id
+    }
   }
 
   restrictions {

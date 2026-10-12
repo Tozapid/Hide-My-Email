@@ -28,6 +28,11 @@ data "archive_file" "reset" {
   }
 
   source {
+    content  = file("${path.module}/lambda/pgp.py")
+    filename = "pgp.py"
+  }
+
+  source {
     content  = file("${path.module}/seed/seed.json")
     filename = "seed.json"
   }

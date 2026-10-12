@@ -97,6 +97,12 @@ variable "mail_retention_days" {
   description = "Days received messages stay under incoming/. The message log is kept until it is deleted on the page."
 }
 
+variable "pgp_enabled" {
+  type        = bool
+  default     = true
+  description = "OpenPGP: the signatures of what the aliases send, the key on the page, the switch of the signatures in the settings and the Web Key Directory with its route and CloudFront path, and the cryptography layer. Off, there is none of it. The secret the keys come from stays (pgp.tf), so turning it back on gives every alias the same key."
+}
+
 variable "tags" {
   type = map(string)
   default = {

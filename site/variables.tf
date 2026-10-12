@@ -36,3 +36,9 @@ variable "policies" {
   })
   description = "Shared CloudFront policies: the cache of the page, the security headers, no caching for the API and the attachments, the forwarding of viewer headers to the API, and the key group that signs the attachment cookie."
 }
+
+variable "web_key_directory" {
+  type        = bool
+  default     = true
+  description = "Pass /.well-known/openpgpkey/* to the API, with the domain in X-Hide-My-Email-Site: the Web Key Directory of the OpenPGP keys of the aliases."
+}

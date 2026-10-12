@@ -689,6 +689,10 @@
     // Loaded once: saving a field redraws the dialog but not the list.
     const contacts = el("section", { class: "contacts" });
     showContacts(local, contacts);
+    // With the signatures off (in the settings, or no PGP at all) there is no
+    // key to show.
+    const signing = state.pgp && state.pgp.signing ? el("section", { class: "contacts signing" }) : null;
+    if (signing) showSigning(local, signing);
     const fill = () => {
       const item = state.items.find((entry) => entry.local === local);
       if (!item) return view.close();
@@ -737,6 +741,7 @@
           el("dt", {}, t("facts.last")), el("dd", {}, item.last_at ? when(item.last_at) : "—"),
         ]),
         contacts,
+        signing,
         el("div", { class: "modal-actions" }, [
           el("div", { class: "actions" }, [
             state.mail ? el("button", { type: "button", class: "primary", onclick: () => showCompose({ alias: item.local }) }, t("compose.open")) : null,
@@ -832,6 +837,40 @@
         el("label", {}, [t("contacts.address"), address]),
         el("label", {}, [t("contacts.name"), name]),
         button,
+      ]),
+    ]);
+  }
+
+  // The OpenPGP key that signs what the alias sends: its fingerprint, where
+  // mail clients find it (the Web Key Directory) and the key to hand out.
+  async function showSigning(local, part) {
+    const head = el("h3", {}, t("signing.title"));
+    let key;
+    try {
+      key = await api("/aliases/" + encodeURIComponent(local) + "/key");
+    } catch (error) {
+      part.replaceChildren(head, el("p", { class: "error" }, error.message));
+      return;
+    }
+    const fingerprint = key.fingerprint.replace(/(.{4})/g, "$1 ").trim();
+    const download = () => {
+      const link = el("a", { href: URL.createObjectURL(new Blob([key.key], { type: "application/pgp-keys" })), download: key.user_id + ".asc" });
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    };
+    fill(part, [
+      head,
+      el("p", { class: "muted small" }, t("signing.hint")),
+      el("dl", { class: "facts" }, [
+        el("dt", {}, t("signing.fingerprint")),
+        el("dd", {}, el("button", { type: "button", class: "address mono", title: t("copy"), onclick: () => copy(fingerprint) }, fingerprint)),
+        el("dt", {}, t("signing.created")), el("dd", {}, when(key.created_at)),
+        el("dt", {}, "WKD"), el("dd", {}, el("a", { href: key.wkd, target: "_blank", rel: "noopener" }, t("signing.wkd"))),
+      ]),
+      el("div", { class: "actions start" }, [
+        el("button", { type: "button", class: "ghost", onclick: download }, t("signing.download")),
       ]),
     ]);
   }
@@ -1063,6 +1102,7 @@
   function showAccount(section) {
     const sections = config.demo ? [] : [["password", t("password.title")], ["mfa", t("mfa.title")]];
     sections.push(["language", t("language.title")], ["tokens", t("tokens.title")]);
+    if (state.pgp) sections.push(["pgp", t("pgp.title")]);
     let current = sections.some(([key]) => key === section) ? section : sections[0][0];
     const body = el("div", { class: "settings-body" });
     const tabs = el("div", { class: "tabs", role: "tablist" });
@@ -1098,6 +1138,7 @@
       if (current === "password") body.append(passwordForm());
       else if (current === "mfa") showMfa(body);
       else if (current === "tokens") showTokens(body);
+      else if (current === "pgp") showPgp(body);
       else {
         body.append(languagePicker(async (code) => {
           await saveLanguage(code);
@@ -1174,6 +1215,30 @@
         },
       }, [el("label", {}, [t("tokens.name"), name]), button]),
     ]);
+  }
+
+  // The OpenPGP signatures of all aliases, on or off. Off, mail goes out
+  // without signature.asc and the aliases show no key; the keys stay the same
+  // and the Web Key Directory keeps them for the mail already signed.
+  function showPgp(part) {
+    const box = el("input", {
+      type: "checkbox",
+      checked: state.pgp.signing,
+      onchange: async (event) => {
+        box.disabled = true;
+        try {
+          state.pgp = await api("/settings/pgp", { method: "PUT", body: { signing: event.target.checked } });
+          toast(t(state.pgp.signing ? "pgp.turnedOn" : "pgp.turnedOff"));
+        } catch (error) {
+          toast(error.message);
+        }
+        showPgp(part);
+      },
+    });
+    part.replaceChildren(
+      el("label", { class: "switch" }, [box, t("pgp.sign")]),
+      el("p", { class: "muted small" }, t("pgp.hint")),
+    );
   }
 
   function passwordForm() {
@@ -1311,6 +1376,7 @@
       state.domains = me.domains && me.domains.length ? me.domains : [me.domain];
       state.forwardTo = me.forward_to;
       state.mail = me.mail !== false;
+      state.pgp = me.pgp;
       await load();
       render();
     } catch (error) {

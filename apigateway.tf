@@ -42,6 +42,17 @@ resource "aws_apigatewayv2_route" "public" {
   target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 
+# The Web Key Directory: public keys, for anyone. The function answers only
+# /.well-known/openpgpkey/policy and the keys of the aliases.
+resource "aws_apigatewayv2_route" "web_key_directory" {
+  #checkov:skip=CKV_AWS_309:Public keys are public; the Web Key Directory is read without credentials.
+  count              = var.pgp_enabled ? 1 : 0
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /.well-known/openpgpkey/{proxy+}"
+  authorization_type = "NONE"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
 resource "aws_cloudwatch_log_group" "api" {
   #checkov:skip=CKV_AWS_158:CloudWatch's own encryption is enough for these logs. A customer managed key would add a monthly charge.
   #checkov:skip=CKV_AWS_338:Thirty days is enough for this private page and keeps the log bill small.
@@ -70,7 +81,7 @@ resource "aws_apigatewayv2_stage" "default" {
     throttling_rate_limit  = 10
   }
 
-  depends_on = [aws_apigatewayv2_route.api, aws_apigatewayv2_route.public]
+  depends_on = [aws_apigatewayv2_route.api, aws_apigatewayv2_route.public, aws_apigatewayv2_route.web_key_directory]
 }
 
 resource "aws_lambda_permission" "api" {

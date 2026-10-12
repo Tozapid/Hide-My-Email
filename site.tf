@@ -14,6 +14,8 @@ module "site" {
   route53_zone_id = try(data.aws_route53_zone.domain[each.value.route53_zone].zone_id, null)
   comment         = each.value == null ? local.name : "${local.name} ${each.key}"
 
+  web_key_directory = var.pgp_enabled
+
   origins = {
     web_bucket_domain  = aws_s3_bucket.web.bucket_regional_domain_name
     web_oac_id         = aws_cloudfront_origin_access_control.web.id

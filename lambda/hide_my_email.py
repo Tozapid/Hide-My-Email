@@ -19,6 +19,18 @@ the function with the receipt. Each recipient is handled on its own:
   goes to the original sender from the alias, with that address taken out of
   the text.
 
+Everything SES sends is signed: replies and new messages carry an OpenPGP
+signature (PGP/MIME, RFC 3156) by the alias's own Ed25519 key (pgp.py),
+forwarded mail one by the key of the relay address it comes from. Each key is
+published in the Web Key Directory of the alias domain:
+/.well-known/openpgpkey/hu/<hash> on the page of each domain, which CloudFront
+passes here, so that mail clients find it by the address and check the
+signature. The private key is never stored: its seed is derived from the
+secret in PGP_SECRET_PARAMETER and the alias, the alias keeps only the time
+the key was made (pgp_created), which fixes the fingerprint. The key has no
+expiry and goes with the alias. The page can stop the signatures (SETTING
+pgp); PGP=false turns all of it off, the directory too.
+
 A conversation may also start here. The page adds a correspondent to an
 alias, which makes the relay address of the pair without a message from
 them: mail to it from the forwarding address goes to them from the alias, as
@@ -42,7 +54,8 @@ API. The web page calls /api/... through API Gateway with a Cognito token:
 list, create, change and delete aliases, ask SES to verify a forwarding
 address while the account is in the SES sandbox, find the conversation behind
 a relay address, list, add and remove the correspondents of an alias, send a
-new message from an alias, read and delete the message log, manage API keys.
+new message from an alias, read and delete the message log, manage API keys,
+turn the PGP signatures on and off.
 
 /api/v1/aliases is the part of the addy.io API that the username generator
 of Bitwarden and the addy.io browser extension use. API Gateway lets it
@@ -50,11 +63,13 @@ through without a Cognito token; the function itself wants an API key made on
 the page.
 
 DynamoDB: pk = ALIAS, sk = local part (domain, comment, forward_to,
-sender_name, active, pinned, created_at, updated_at, forwarded, last_at);
+sender_name, active, pinned, created_at, updated_at, forwarded, last_at,
+pgp_created);
 pk = TOKEN, sk = SHA-256 of an API key (id, name, created_by, created_at,
 last_used_at); pk = REPLY, sk = code (alias, sender, name); pk = MSG, sk = id,
 which sorts by time (direction, alias, alias_domain, code, relay, from_*,
-to_*, delivered_to, subject, at, size, spam, attachments).
+to_*, delivered_to, subject, at, size, spam, attachments); pk = SETTING,
+sk = pgp (signing, updated_at).
 """
 
 import base64
@@ -63,15 +78,19 @@ import email.message
 import email.policy
 import email.utils
 import hashlib
+import hmac
 import html.parser
 import json
 import logging
 import os
+import quopri
 import re
 import secrets
 import string
 from datetime import datetime, timezone
 from urllib.parse import quote, unquote
+
+import pgp
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -147,6 +166,7 @@ _ses_v1 = None
 _table = None
 _ssm = None
 _signing_key = None
+_pgp_secret = None
 
 
 # Errors of the API: a code, which the page translates, and an English text.
@@ -155,6 +175,7 @@ ERRORS = {
     "alias_not_found": "Address not found",
     "not_found": "Not found",
     "bad_active": "active must be true or false",
+    "bad_signing": "signing must be true or false",
     "nothing_to_change": "Nothing to change",
     "address_required": "An email address is needed",
     "message_not_found": "Message not found",
@@ -268,7 +289,7 @@ def forward(alias, raw, mail, receipt):
     # make Gmail file the message as spam. A filter can use the header.
     if spam:
         message["X-Hide-My-Email-Spam"] = "yes"
-    send(relay_from, [destination(alias)], message)
+    send(relay_from, [destination(alias)], signed(message, alias, relay.split("@")[0]))
     table().update_item(
         Key={"pk": "ALIAS", "sk": local},
         UpdateExpression="SET #forwarded = if_not_exists(#forwarded, :zero) + :one, #last_at = :now",
@@ -313,7 +334,7 @@ def reply(code, raw, mail, receipt):
     message["From"] = alias_from
     message["To"] = email.utils.formataddr((item.get("name") or "", item["sender"]))
     hide_owner(message, owner, alias_address)
-    send(alias_from, [item["sender"]], message)
+    send(alias_from, [item["sender"]], signed(message, alias))
     log_message(mail, raw, {
         "direction": "out",
         "alias": item["alias"],
@@ -503,6 +524,8 @@ def api(event):
     parts = [unquote(part) for part in (event.get("rawPath") or "/").split("/") if part]
     if parts[:2] == ["api", "v1"]:
         return public_api(method, parts[2:], event)
+    if parts[:2] == [".well-known", "openpgpkey"] and pgp_enabled():
+        return web_key_directory(parts[2:], event)
     try:
         if parts[:1] != ["api"]:
             raise ApiError(404, "not_found")
@@ -530,7 +553,10 @@ def api_route(method, parts, event):
             "forward_to": forward_to(),
             "production": production_access(),
             "mail": mail_enabled(),
+            "pgp": {"signing": signing_on()} if pgp_enabled() else None,
         })
+    if parts == ["settings", "pgp"] and method == "PUT":
+        return response(200, set_signing(body_json(event).get("signing")))
     if parts == ["aliases"] and method == "GET":
         items = all_aliases()
         addresses = {forward_to()} | {destination(item) for item in items}
@@ -603,6 +629,8 @@ def api_route(method, parts, event):
         return response(201, add_relay(alias, address, name))
     if len(parts) == 2 and parts[0] == "relays" and method == "DELETE":
         return response(200, delete_relay(parts[1]))
+    if len(parts) == 3 and parts[0] == "aliases" and parts[2] == "key" and method == "GET":
+        return response(200, public_signing_key(existing_alias(parts[1])))
     if len(parts) == 3 and parts[0] == "aliases" and parts[2] == "relays" and method == "GET":
         return response(200, {"items": alias_relays(existing_alias(parts[1]))})
     if parts == ["messages"] and method == "GET":
@@ -896,6 +924,211 @@ def find_relay(address):
     }
 
 
+# OpenPGP signatures --------------------------------------------------------
+
+# The key of an alias, or of one of its relay addresses (relay: the local
+# part), which signs the mail forwarded from that address. Its seed comes from
+# the secret and the local part with the time the key of the alias was made;
+# that time is set once, on first use, so the keys and their fingerprints stay
+# the same for the life of the alias. Aliases never end like a relay address,
+# so no two addresses share a key.
+def alias_signing_key(alias, relay=None):
+    created = alias.get("pgp_created")
+    if not created:
+        created = int(datetime.now(timezone.utc).timestamp())
+        try:
+            table().update_item(
+                Key={"pk": "ALIAS", "sk": alias["sk"]},
+                UpdateExpression="SET #created = :created",
+                ConditionExpression="attribute_exists(sk) AND attribute_not_exists(#created)",
+                ExpressionAttributeNames={"#created": "pgp_created"},
+                ExpressionAttributeValues={":created": created},
+            )
+        except Exception as exc:
+            if error_code(exc) != "ConditionalCheckFailedException":
+                raise
+            # Made a moment ago by another call; that one counts.
+            created = (get_alias(alias["sk"]) or {}).get("pgp_created") or created
+        alias["pgp_created"] = created
+    local = relay or alias["sk"]
+    seed = hmac.new(pgp_secret(), f"{local}\n{int(created)}".encode(), hashlib.sha256).digest()
+    return pgp.SigningKey(seed, int(created), f"{local}@{alias_domain(alias)}")
+
+
+def pgp_secret():
+    global _pgp_secret
+    if _pgp_secret is None:
+        value = ssm().get_parameter(Name=env("PGP_SECRET_PARAMETER"), WithDecryption=True)["Parameter"]["Value"]
+        _pgp_secret = hashlib.sha256(value.encode()).digest()
+    return _pgp_secret
+
+
+# Two switches. PGP=false (the Terraform variable pgp_enabled) is no PGP at
+# all: no signatures, no key on the page, no Web Key Directory. The switch on
+# the page (SETTING pgp, "signing") stops the signatures and hides the keys,
+# while the directory keeps serving them for the mail already signed; the keys
+# stay the same either way.
+def pgp_enabled():
+    return os.environ.get("PGP", "true").lower() != "false"
+
+
+def signing_on():
+    if not pgp_enabled():
+        return False
+    item = table().get_item(Key={"pk": "SETTING", "sk": "pgp"}).get("Item") or {}
+    return item.get("signing", True) is not False
+
+
+def set_signing(signing):
+    if not pgp_enabled():
+        raise ApiError(404, "not_found")
+    if not isinstance(signing, bool):
+        raise ApiError(400, "bad_signing")
+    table().put_item(Item={"pk": "SETTING", "sk": "pgp", "signing": signing, "updated_at": now_iso()})
+    return {"signing": signing}
+
+
+def public_signing_key(alias):
+    if not signing_on():
+        raise ApiError(404, "not_found")
+    key = alias_signing_key(alias)
+    return {
+        "fingerprint": key.fingerprint.hex().upper(),
+        "user_id": key.user_id,
+        "created_at": datetime.fromtimestamp(key.created, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "key": key.armored_public_key(),
+        # Relative in the demo: its page is not at the domain of the aliases.
+        "wkd": (f"https://{alias_domain(alias)}" if mail_enabled() else "") + f"/.well-known/openpgpkey/hu/{pgp.wkd_hash(alias['sk'])}?l={quote(alias['sk'])}",
+    }
+
+
+# The message signed by the address it comes from (the alias, or its relay
+# address for forwarded mail), as bytes to send as they are; the message
+# itself, unsigned, if signing fails: the mail matters more than its signature.
+def signed(message, alias, relay=None):
+    if not alias:
+        return message
+    try:
+        if not signing_on():
+            return message
+        return signed_message(message, alias_signing_key(alias, relay))
+    except Exception:
+        logger.exception("message of %s not signed", relay or alias.get("sk"))
+        return message
+
+
+# PGP/MIME (RFC 3156): the content of the message (its Content-* headers and
+# body) is the signed part, the signature the second part of
+# multipart/signed. Mail servers may re-encode 8-bit text, strip trailing
+# spaces or rewrap long lines, any of which would break the signature, so
+# every text part is quoted-printable and every other part base64 first.
+def signed_message(message, key):
+    raw = message.as_bytes(policy=email.policy.SMTP)
+    header_block = raw.split(b"\r\n\r\n", 1)[0]
+    content = parse(raw)
+    for name in {name for name in content.keys() if not name.lower().startswith("content-")}:
+        del content[name]
+    if "Content-Type" not in content:
+        content["Content-Type"] = "text/plain; charset=us-ascii"
+    transport_safe(content)
+    part = content.as_bytes(policy=email.policy.SMTP)
+    signature = key.sign(part).encode()
+    boundary = "hme-signed-" + secrets.token_hex(12)
+    headers = [field for field in header_fields(header_block) if not field.lower().startswith((b"content-", b"mime-version:"))]
+    return b"".join([
+        *[field + b"\r\n" for field in headers],
+        b"MIME-Version: 1.0\r\n",
+        b'Content-Type: multipart/signed; micalg=pgp-sha256;\r\n protocol="application/pgp-signature";\r\n boundary="' + boundary.encode() + b'"\r\n',
+        b"\r\n",
+        b"This is an OpenPGP/MIME signed message (RFC 4880 and 3156)\r\n",
+        b"--" + boundary.encode() + b"\r\n",
+        part,
+        b"\r\n--" + boundary.encode() + b"\r\n",
+        b'Content-Type: application/pgp-signature; name="signature.asc"\r\n',
+        b"Content-Description: OpenPGP digital signature\r\n",
+        b'Content-Disposition: attachment; filename="signature.asc"\r\n',
+        b"\r\n",
+        signature,
+        b"\r\n--" + boundary.encode() + b"--\r\n",
+    ])
+
+
+# The fields of a header block, each with its folded lines.
+def header_fields(block):
+    fields = []
+    for line in block.split(b"\r\n"):
+        if line[:1] in (b" ", b"\t") and fields:
+            fields[-1] += b"\r\n" + line
+        elif line:
+            fields.append(line)
+    return fields
+
+
+# Signed or encrypted parts of a forwarded message stay as they are: new
+# encodings would break the signatures of their senders.
+def transport_safe(message):
+    if message.get_content_type() in ("multipart/signed", "multipart/encrypted"):
+        return
+    if message.is_multipart():
+        for part in message.get_payload():
+            transport_safe(part)
+        return
+    if message.get_content_maintype() == "message":
+        return
+    if (message.get("Content-Transfer-Encoding") or "").lower() in ("base64", "quoted-printable"):
+        return
+    data = message.get_payload(decode=True) or b""
+    del message["Content-Transfer-Encoding"]
+    if message.get_content_maintype() == "text":
+        encoded = quopri.encodestring(data.replace(b"\r\n", b"\n")).decode("ascii")
+        # "From " at the start of a line may become ">From " in a mailbox.
+        encoded = re.sub(r"(?m)^From ", "=46rom ", encoded)
+        message.set_payload(encoded)
+        message["Content-Transfer-Encoding"] = "quoted-printable"
+    else:
+        message.set_payload(base64.encodebytes(data).decode("ascii"))
+        message["Content-Transfer-Encoding"] = "base64"
+
+
+# The Web Key Directory of the domain the page was asked on (CloudFront names
+# it in X-Hide-My-Email-Site): the policy and the key of each of its aliases
+# and relay addresses, found by the hash of the local part (direct method).
+def web_key_directory(parts, event):
+    headers = {name.lower(): value for name, value in (event.get("headers") or {}).items()}
+    domain = (headers.get("x-hide-my-email-site") or domain_name()).lower()
+    plain = {"Access-Control-Allow-Origin": "*", "Cache-Control": "max-age=3600"}
+    if parts == ["policy"]:
+        return {"statusCode": 200, "headers": {**plain, "Content-Type": "text/plain"}, "body": ""}
+    if len(parts) == 2 and parts[0] == "hu":
+        local = ((event.get("queryStringParameters") or {}).get("l") or "").lower()
+        for alias, relay in directory_candidates(local):
+            if alias and alias_domain(alias) == domain and pgp.wkd_hash(relay or alias["sk"]) == parts[1]:
+                return {
+                    "statusCode": 200,
+                    "headers": {**plain, "Content-Type": "application/octet-stream"},
+                    "body": base64.b64encode(alias_signing_key(alias, relay).public_key()).decode(),
+                    "isBase64Encoded": True,
+                }
+    return {"statusCode": 404, "headers": {**plain, "Content-Type": "text/plain"}, "body": "not found"}
+
+
+# The addresses a key may be asked for, as (alias, relay local part or None):
+# the one named by ?l=, or else every alias and relay address.
+def directory_candidates(local):
+    if local:
+        alias = get_alias(local)
+        if alias:
+            return [(alias, None)]
+        code = relay_code(local)
+        item = table().get_item(Key={"pk": "REPLY", "sk": code}).get("Item") if code else None
+        if item and relay_address(item["sender"], code).split("@")[0] == local:
+            return [(get_alias(item["alias"]), local)]
+        return []
+    aliases = {alias["sk"]: alias for alias in all_aliases()}
+    relays = [(aliases.get(item["alias"]), relay_address(item["sender"], item["sk"]).split("@")[0]) for item in query_all("REPLY")]
+    return [(alias, None) for alias in aliases.values()] + relays
+
+
 # The relay address of a correspondent and what the page shows of it.
 def public_relay(item, alias):
     domain = alias_domain(alias) if alias else domain_name()
@@ -972,13 +1205,14 @@ def send_new(payload):
     message["Date"] = email.utils.formatdate(usegmt=True)
     message["Message-ID"] = email.utils.make_msgid(domain=domain)
     message.set_content(text)
+    outgoing = signed(message, alias)
     try:
-        send(alias_from, [to], message)
+        send(alias_from, [to], outgoing)
     except Exception as exc:
         if error_code(exc) in ("MessageRejected", "AccountSendingPausedException", "MailFromDomainNotVerifiedException"):
             raise ApiError(400, "send_rejected") from exc
         raise
-    message_id = store_log(message.as_bytes(policy=email.policy.SMTP), {
+    message_id = store_log(outgoing if isinstance(outgoing, bytes) else outgoing.as_bytes(policy=email.policy.SMTP), {
         "direction": "out",
         "alias": alias["sk"],
         "alias_domain": domain,
@@ -1495,11 +1729,14 @@ def verdict(receipt, name):
 
 # SES puts FromEmailAddress into the From of a raw message as it is, so it
 # carries the display name too: a bare address would drop the name.
+# message is a parsed message or, once signed, its exact bytes: a signed
+# message must not be serialized again.
 def send(source, destinations, message):
+    data = message if isinstance(message, bytes) else message.as_bytes(policy=email.policy.SMTP)
     ses().send_email(
         FromEmailAddress=source,
         Destination={"ToAddresses": destinations},
-        Content={"Raw": {"Data": message.as_bytes(policy=email.policy.SMTP)}},
+        Content={"Raw": {"Data": data}},
     )
 
 

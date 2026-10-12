@@ -19,6 +19,7 @@ The demo has **no mail**: it neither receives nor sends a single message. Everyt
 - **Replies** to the relay address go back to the original sender from the alias. Your personal address is taken out of the quoted text and the headers, copies (`Cc`) are not sent, and only your own mailbox may reply (SES must see DMARC, or SPF, pass).
 - **Correspondents and new conversations**: the dialog of an alias lists everyone with a reply address for it, who wrote or whom you added. Adding someone (`bob@shop.example`) makes their reply address (`bob_at_shop_example_<code>@hide.example.com`) at once: mail to it from your forwarding address goes to them from the alias, so a conversation can start from your own mail client.
 - **New message from the page**: from an alias, to anyone, a subject and plain text (no attachments). The recipient becomes a correspondent of the alias and the message goes to the log.
+- **OpenPGP signatures** on everything SES sends, both ways: replies and new messages carry the key of the alias, forwarded mail the key of the relay address it comes from. The keys are published in the Web Key Directory of each domain, where mail clients find them by address. A switch in the settings stops the signatures; `pgp_enabled = false` removes PGP altogether.
 - **Message log**: every forwarded message, every reply and every new message, kept until you delete it. Messages are shown as text only (HTML is converted, so no script runs and no tracker loads); attachments are downloaded through CloudFront with a signed cookie.
 - **Several domains**: each with its own SES identity, DKIM, MAIL FROM, DMARC, BIMI, certificate and copy of the page.
 - **API** compatible with [addy.io](https://app.addy.io/docs/): the Bitwarden username generator and the addy.io browser extension create and manage aliases with a personal API key.
@@ -73,7 +74,7 @@ flowchart LR
   OUT -->|reply from the alias| X
   B[Browser, Bitwarden] --> CF[CloudFront, one per domain]
   CF -->|page| WEB[(S3: page)]
-  CF -->|/api/*| API[API Gateway] --> L
+  CF -->|/api/*, /.well-known/openpgpkey/*| API[API Gateway] --> L
   CF -->|/attachments/*, signed cookie| MAIL
   B -->|sign in| COG[Cognito]
   EB[EventBridge, demo only] --> R[Lambda: hourly reset]
@@ -88,8 +89,84 @@ flowchart LR
 | Page | S3 + CloudFront per domain (or one on `*.cloudfront.net` without domains), module [`site/`](site/) |
 | Sign-in | Cognito user pool, no self sign-up, optional TOTP |
 | API | API Gateway HTTP API: `/api/*` with a Cognito JWT authorizer, `/api/v1/*` (addy.io) with an API key checked by the Lambda |
+| Signatures | Ed25519 OpenPGP keys derived from a secret in SSM (`pgp.tf`), never stored; `cryptography` in a Lambda layer built while planning; Web Key Directory through CloudFront and API Gateway |
 | Attachments | CloudFront `/attachments/*` with a one-hour signed cookie set by the API (`trusted_key_groups`, key in SSM) |
 | Demo reset | Lambda `lambda/reset.py`, EventBridge `rate(1 hour)` |
+
+### How mail moves
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant S as Sender<br/>office@shop.example
+  participant IN as SES receiving<br/>MX of the domain
+  participant L as Lambda
+  participant D as DynamoDB, S3
+  participant OUT as SES sending<br/>DKIM of the domain
+  participant M as Your mailbox
+  participant P as Page
+
+  Note over S,M: Forwarding
+  S->>IN: to quiet-river-42@hide.example.com
+  IN->>D: store in S3 incoming/
+  IN->>L: invoke with the receipt (spam, virus, SPF, DMARC)
+  L->>D: reply code = hash of alias and sender, kept with the sender
+  L->>L: From becomes office_at_shop_example_CODE@hide.example.com,<br/>the sender's DKIM and Return-Path go, signed by the key of that address
+  L->>OUT: SendEmail
+  OUT->>M: from office_at_shop_example_CODE@hide.example.com
+  L->>D: message log: copy, attachments, record
+
+  Note over S,M: Reply
+  M->>IN: to office_at_shop_example_CODE@hide.example.com
+  IN->>L: invoke with the receipt
+  L->>D: the code gives the alias and the sender
+  L->>L: only from the forwarding address with DMARC or SPF passed,<br/>your address taken out, no copies,<br/>From becomes the alias, signed by its key
+  L->>OUT: SendEmail
+  OUT->>S: from quiet-river-42@hide.example.com
+  L->>D: message log
+
+  Note over S,P: New message from the page
+  P->>L: POST /api/messages through API Gateway
+  L->>D: the recipient becomes a correspondent with a reply code
+  L->>OUT: SendEmail, signed by the key of the alias
+  OUT->>S: from quiet-river-42@hide.example.com
+
+  Note over S,P: Checking a signature
+  S->>P: GET /.well-known/openpgpkey/hu/HASH on the domain of the address
+  P->>L: through CloudFront and API Gateway
+  L-->>S: the public key of the address
+```
+
+The demo has no mail: only the page part works there, and nothing is sent.
+
+### OpenPGP signatures and the Web Key Directory
+
+Every message SES sends is signed with OpenPGP as PGP/MIME (`multipart/signed`, RFC 3156):
+
+| Message | From | Signed by the key of |
+| --- | --- | --- |
+| Reply to a correspondent | `quiet-river-42@hide.example.com` | the alias |
+| New message from the page | `quiet-river-42@hide.example.com` | the alias |
+| Forwarded to you | `office_at_shop_example_<code>@hide.example.com` | that relay address |
+
+So the signer is always the address in `From`. Each key is an Ed25519 key (OpenPGP v4) with the address as its only user id and no expiry, so it tells nothing about you. The keys are published in the Web Key Directory (WKD, direct method) of the domain, `https://hide.example.com/.well-known/openpgpkey/hu/<hash>`. GnuPG, Thunderbird, Kleopatra, Mailvelope, Proton Mail and FairEmail/OpenKeychain find them by the sender's address, and the signature names the signer's address (Signer's User ID), so `gpg --auto-key-retrieve` knows where to look:
+
+```bash
+gpg --locate-keys --auto-key-locate clear,wkd quiet-river-42@hide.example.com
+```
+
+The dialog of an alias shows its key: the fingerprint (a click copies it), the WKD link and "Download key (.asc)".
+
+No private key is stored. The function derives each key from a secret in SSM (`/<name>/pgp-secret`, `pgp.tf`) and the local part; the alias keeps only the time its key was made (`pgp_created`), which fixes the fingerprints of the alias and of its relay addresses. The secret is kept from being destroyed (`prevent_destroy`): a new one would give every address a new key, and the mail already sent would no longer check against the keys in WKD. The same protection makes `terraform destroy` refuse until it is lifted by hand. If signing fails, the message still goes out, unsigned, with the error in the Lambda log.
+
+Before signing, text parts are turned into quoted-printable and the others into base64, so that no server on the way re-encodes them and breaks the signature. Parts a sender signed or encrypted themselves (`multipart/signed`, `multipart/encrypted`) stay as they are, with their own signature intact. Recipients without OpenPGP (Gmail, Outlook) see a `signature.asc` attachment.
+
+Two switches:
+
+- **Settings → PGP → Sign outgoing mail** (kept in DynamoDB; `PUT /api/settings/pgp` with `{"signing": false}`). Off, mail goes out without `signature.asc` and the aliases show no key. WKD keeps serving the keys, so the mail already sent can still be checked, and switching back on gives the same keys. The demo reset switches it back on.
+- **`pgp_enabled = false`** removes PGP altogether: no signatures, no PGP tab, no key on the page, no WKD (route in API Gateway, path and header in CloudFront), no layer and so no build while planning. Only the secret stays, so that `true` again gives every address the same key.
+
+The demo has no mail, so it signs nothing, but it shows the keys and serves WKD at its `*.cloudfront.net` address.
 
 A reply code is 12 characters of a SHA-256 of "alias + sender", so one sender always gets the same relay address; the readable part before it is only for people. The full data model is in the docstring of [`lambda/hide_my_email.py`](lambda/hide_my_email.py).
 
@@ -116,6 +193,7 @@ The defaults deploy the **test environment**, the public demo above. It is the s
 | `admin_password` | `Demo-Password-1` | `""` — Cognito mails a temporary password |
 | `reset_schedule` | `rate(1 hour)` | `""` — no reset, no examples |
 | `max_aliases`, `max_tokens`, `max_relays` | `100`, `20`, `200` | `0` — no limit |
+| `pgp_enabled` | `true` | `true` — OpenPGP signatures and WKD; `false` removes them |
 
 Steps to production:
 
@@ -147,8 +225,9 @@ Steps to production:
    }
    ```
 
-   Its permissions: everything named with the `name` prefix (`s3:*` on `arn:aws:s3:::hme-demo-*`, the table, functions, roles with `iam:PassRole`, log groups, SSM parameters under `/hme-demo/`, the EventBridge rule), API Gateway, Cognito and CloudFront (their ids are generated), log delivery for API access logs, and the state objects under the state key prefix. The demo needs no SES, ACM or Route 53; production adds them.
+   Its permissions: everything named with the `name` prefix (`s3:*` on `arn:aws:s3:::hme-demo-*`, the table, functions and Lambda layers, roles with `iam:PassRole`, log groups, SSM parameters under `/hme-demo/`, the EventBridge rule), API Gateway, Cognito and CloudFront (their ids are generated), log delivery for API access logs, and the state objects under the state key prefix. The demo needs no SES, ACM or Route 53; production adds them.
 3. In the GitHub repository: the environment `demo`, and the variables `AWS_ROLE_ARN` (the role) and `TF_STATE_BUCKET` (the state bucket). There are no secrets.
+4. Python 3 with pip (or the venv module) and access to PyPI where Terraform plans: `lambda/build_layer.py` fetches the `cryptography` wheels of `lambda/requirements.txt` for Linux arm64 into `.build/layer`. The same versions give the same zip, so the layer changes only with them. Not needed with `pgp_enabled = false`.
 
 ### GitHub Actions
 
@@ -199,7 +278,7 @@ curl -s https://<your page>/api/v1/aliases -H "Authorization: Bearer $HME_KEY" \
   -H "Content-Type: application/json" -d '{"domain": "hide.example.com", "description": "shop.example"}'
 ```
 
-The API of the page (`/api/*`, Cognito token) is in [`lambda/hide_my_email.py`](lambda/hide_my_email.py); its errors carry a code that the page translates ([`web/i18n.js`](web/i18n.js)). Correspondents: `GET /api/aliases/<name>/relays`, `POST /api/relays` (`alias`, `address`, `name`), `DELETE /api/relays/<reply address>`. A new message: `POST /api/messages` (`alias`, `to`, `subject`, `text`, up to 100,000 characters).
+The API of the page (`/api/*`, Cognito token) is in [`lambda/hide_my_email.py`](lambda/hide_my_email.py); its errors carry a code that the page translates ([`web/i18n.js`](web/i18n.js)). Correspondents: `GET /api/aliases/<name>/relays`, `POST /api/relays` (`alias`, `address`, `name`), `DELETE /api/relays/<reply address>`. A new message: `POST /api/messages` (`alias`, `to`, `subject`, `text`, up to 100,000 characters). The key of an alias: `GET /api/aliases/<name>/key`. The switch of the signatures: `PUT /api/settings/pgp` (`signing`); `GET /api/me` tells its state in `pgp` (`null` without PGP).
 
 ## Deliverability and spam
 
@@ -250,6 +329,7 @@ Nothing runs between messages and page views, and most services stay within the 
 - `/api/v1/*` passes API Gateway without Cognito, but the Lambda answers `401` without a valid key, and a key opens aliases only. Keys are made and revoked only after signing in.
 - `/attachments/*` needs a cookie signed with the stack's key: `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/attachments`, one hour, set by the API after the token is checked and cleared at sign-out.
 - Buckets are private: public access blocked, read only by the stack's distributions (origin access control); the mail bucket only under `attachments/`. Responses of `/api/*` and `/attachments/*` are never cached.
+- `/.well-known/openpgpkey/*` is public, as WKD has to be: it answers the policy and the public keys of the addresses of the domain it is asked on, nothing else.
 - The Lambda is invoked only by the SES receipt rule and this API (and the reset by its schedule).
 - The page shows messages as text only, builds its DOM itself, and its content security policy allows scripts only from itself and two pinned jsDelivr packages with subresource integrity.
 
@@ -259,6 +339,7 @@ Nothing runs between messages and page views, and most services stay within the 
 | --- | --- |
 | `ses.tf` | SES identities of the domains, DKIM, MAIL FROM, DMARC, BIMI, MX, the receipt rule (mail only) |
 | `lambda.tf`, `iam.tf`, `lambda/hide_my_email.py` | The function, its permissions and code, with tests in `hide_my_email_test.py` |
+| `pgp.tf`, `lambda/pgp.py`, `lambda/build_layer.py`, `lambda/requirements.txt` | The secret of the OpenPGP keys; the keys and signatures, with tests against GnuPG in `pgp_test.py`; the `cryptography` layer and how it is built |
 | `apigateway.tf`, `cognito.tf` | The API and the users |
 | `s3.tf`, `dynamodb.tf` | The mail bucket and the table |
 | `cloudfront.tf`, `site.tf`, `site/` | What every distribution shares; the module of the page on one domain (certificate and distribution), called per domain |
@@ -269,8 +350,10 @@ Nothing runs between messages and page views, and most services stay within the 
 ## Tests
 
 ```bash
-cd lambda && python3 -m unittest -v hide_my_email_test reset_test
+cd lambda && python3 -m unittest -v hide_my_email_test pgp_test reset_test
 ```
+
+The signature tests need the `cryptography` package (`pip install -r lambda/requirements.txt`; CI installs it) and check the keys and signatures with a real `gpg` where there is one; without the package they are skipped.
 
 On fake S3, DynamoDB, SES, SSM and Cognito: forwarding and replies on several domains, the message log and attachments, the signed cookie (checked as a real PKCS#1 v1.5 signature), the page API, the addy.io API with keys, rejection of strangers, the installation without mail and its limits, and the demo reset end to end through the API. The fake table refuses DynamoDB reserved words without `ExpressionAttributeNames`, as DynamoDB does.
 
@@ -283,6 +366,7 @@ On fake S3, DynamoDB, SES, SSM and Cognito: forwarding and replies on several do
 - Forwarding addresses verified from the page are SES identities outside Terraform; they stay after `terraform destroy`.
 - Two-factor authentication is TOTP only; a lost authenticator is reset in the Cognito console.
 - No addy.io labels.
+- The keys only sign: mail to an alias cannot be encrypted with them, and incoming mail is not encrypted. The signature of a forwarded message proves that the relay forwarded it unchanged, not who the original sender was.
 
 ## License
 
