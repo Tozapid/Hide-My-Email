@@ -87,6 +87,8 @@ import quopri
 import re
 import secrets
 import string
+import time
+import urllib.request
 from datetime import datetime, timezone
 from urllib.parse import quote, unquote
 
@@ -555,6 +557,8 @@ def api_route(method, parts, event):
             "mail": mail_enabled(),
             "pgp": {"signing": signing_on()} if pgp_enabled() else None,
         })
+    if parts == ["version"] and method == "GET":
+        return response(200, version_info())
     if parts == ["settings", "pgp"] and method == "PUT":
         return response(200, set_signing(body_json(event).get("signing")))
     if parts == ["aliases"] and method == "GET":
@@ -1822,3 +1826,122 @@ def table():
         import boto3
         _table = boto3.resource("dynamodb").Table(env("TABLE_NAME"))
     return _table
+
+
+# Versions -----------------------------------------------------------------
+
+# The version of this deployment (VERSION) and the releases of the demo
+# repository (RELEASES_REPOSITORY, owner/name) that came after it. They come
+# from the Atom feed of the repository's GitHub releases, a public page that
+# the hourly limit of the REST API, shared by every function behind Lambda's
+# addresses, does not touch. The list stays an hour in the warm function, and
+# the last one read serves while GitHub does not answer.
+RELEASES_SECONDS = 3600
+VERSION_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+ATOM = "{http://www.w3.org/2005/Atom}"
+_releases = None
+
+
+def version_info():
+    current = os.environ.get("VERSION", "")
+    repository = os.environ.get("RELEASES_REPOSITORY", "")
+    info = {
+        "version": current,
+        "repository": repository,
+        "url": f"https://github.com/{repository}/releases" if repository else None,
+        "latest": None,
+        "newer": [],
+        "checked_at": None,
+        "error": None,
+    }
+    if not repository:
+        return info
+    try:
+        releases, checked_at = github_releases(repository)
+    except Exception:
+        logger.exception("releases of %s not read", repository)
+        info["error"] = "unavailable"
+        return info
+    info["checked_at"] = checked_at
+    info["latest"] = releases[0]["version"] if releases else None
+    info["newer"] = [release for release in releases if version_key(release["version"]) > version_key(current)]
+    return info
+
+
+def version_key(value):
+    match = VERSION_RE.match(value or "")
+    return tuple(int(part) for part in match.groups()) if match else ()
+
+
+def github_releases(repository):
+    global _releases
+    now = time.time()
+    if _releases and _releases[0] == repository and now - _releases[1] < RELEASES_SECONDS:
+        return _releases[2], _releases[3]
+    try:
+        request = urllib.request.Request(
+            f"https://github.com/{repository}/releases.atom",
+            headers={"Accept": "application/atom+xml", "User-Agent": "release-check (+https://github.com/" + repository + ")"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as answer:
+            releases = parse_releases(answer.read(2_000_000))
+    except Exception:
+        if _releases and _releases[0] == repository:
+            logger.warning("releases of %s not read; the list of %s serves", repository, _releases[3], exc_info=True)
+            return _releases[2], _releases[3]
+        raise
+    checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    _releases = (repository, now, releases, checked_at)
+    return releases, checked_at
+
+
+# The entries of the feed whose tag is a version, newest version first, with
+# their notes as plain text.
+def parse_releases(feed):
+    import xml.etree.ElementTree as ElementTree
+
+    releases = []
+    for entry in ElementTree.fromstring(feed).findall(ATOM + "entry"):
+        link = entry.find(ATOM + "link")
+        url = link.get("href", "") if link is not None else ""
+        version = unquote(url.rstrip("/").rsplit("/", 1)[-1])
+        if not version_key(version):
+            continue
+        releases.append({
+            "version": version,
+            "title": (entry.findtext(ATOM + "title") or version).strip(),
+            "date": (entry.findtext(ATOM + "updated") or "")[:10],
+            "url": url,
+            "notes": release_notes(entry.findtext(ATOM + "content") or "")[:4000],
+        })
+    releases.sort(key=lambda release: version_key(release["version"]), reverse=True)
+    return releases
+
+
+class ReleaseNotes(html.parser.HTMLParser):
+    BREAKS = {"p", "div", "br", "ul", "ol", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"}
+
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "li":
+            self.parts.append("\n• ")
+        elif tag in self.BREAKS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self.BREAKS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+def release_notes(value):
+    parser = ReleaseNotes()
+    parser.feed(value)
+    parser.close()
+    lines = (" ".join(line.split()) for line in "".join(parser.parts).splitlines())
+    return "\n".join(line for line in lines if line)
