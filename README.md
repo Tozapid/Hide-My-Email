@@ -28,7 +28,7 @@ The demo has **no mail**: it neither receives nor sends a single message. Everyt
 
 ## Compared with other services
 
-Apple Hide My Email, SimpleLogin and addy.io solve the same problem well; the difference is who runs the service and whose domain the addresses are on.
+Other alternatives solve the same problem well; the difference is who runs the service and whose domain the addresses are on.
 
 | | 🛡️ **Hide My Email** (this project) | 🔀 **Other alternatives** |
 | --- | --- | --- |
@@ -45,8 +45,6 @@ Apple Hide My Email, SimpleLogin and addy.io solve the same problem well; the di
 | 🔌 **API, Bitwarden, browser extension** | ✅ addy.io-compatible: Bitwarden and the addy.io extension | ⚠️ Depends on the service |
 | 🔐 **PGP encryption of forwarded mail** | 🔜 Planned | ⚠️ Some of them |
 | 📨 **Message log with attachments** | ✅ Text-only view, kept in your bucket | ❌ Usually not |
-
-Other alternatives are services such as [Apple Hide My Email](https://www.apple.com/icloud/), [SimpleLogin](https://simplelogin.io/) and [addy.io](https://addy.io/); their plans and features change, see their pages (October 2026).
 
 What you get by running it yourself:
 
