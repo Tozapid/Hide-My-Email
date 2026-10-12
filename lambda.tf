@@ -81,6 +81,8 @@ resource "aws_lambda_function" "relay" {
 
   environment {
     variables = {
+      VERSION                = local.version
+      RELEASES_REPOSITORY    = var.releases_repository
       DOMAIN                 = local.alias_domains[0]
       DOMAINS                = join(",", local.alias_domains)
       FORWARD_TO             = var.forward_to
@@ -123,4 +125,10 @@ resource "aws_lambda_permission" "ses" {
   principal      = "ses.amazonaws.com"
   source_account = local.account_id
   source_arn     = local.receipt_rule_arn
+}
+
+# The version of this deployment: the newest entry of CHANGELOG.md
+# (## vX.Y.Z — date). After main is deployed, CI releases it on GitHub.
+locals {
+  version = regex("(?m)^## (v[0-9]+\\.[0-9]+\\.[0-9]+) ", file("${path.module}/CHANGELOG.md"))[0]
 }

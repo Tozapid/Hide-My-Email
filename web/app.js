@@ -1103,6 +1103,7 @@
     const sections = config.demo ? [] : [["password", t("password.title")], ["mfa", t("mfa.title")]];
     sections.push(["language", t("language.title")], ["tokens", t("tokens.title")]);
     if (state.pgp) sections.push(["pgp", t("pgp.title")]);
+    sections.push(["version", t("version.title")]);
     let current = sections.some(([key]) => key === section) ? section : sections[0][0];
     const body = el("div", { class: "settings-body" });
     const tabs = el("div", { class: "tabs", role: "tablist" });
@@ -1139,6 +1140,7 @@
       else if (current === "mfa") showMfa(body);
       else if (current === "tokens") showTokens(body);
       else if (current === "pgp") showPgp(body);
+      else if (current === "version") showVersion(body);
       else {
         body.append(languagePicker(async (code) => {
           await saveLanguage(code);
@@ -1214,6 +1216,41 @@
           }
         },
       }, [el("label", {}, [t("tokens.name"), name]), button]),
+    ]);
+  }
+
+  // The version of the site and the releases of the demo repository that came
+  // after it, with their notes. The API reads them from GitHub and keeps them
+  // an hour.
+  async function showVersion(part) {
+    part.replaceChildren(el("p", { class: "muted" }, t("loading")));
+    let info;
+    try {
+      info = await api("/version");
+    } catch (error) {
+      part.replaceChildren(el("p", { class: "error" }, error.message));
+      return;
+    }
+    const link = (href, text) => el("a", { href, target: "_blank", rel: "noopener" }, text);
+    let status;
+    if (info.error) status = el("p", { class: "error" }, t("version.unavailable"));
+    else if (!info.repository) status = el("p", { class: "muted" }, t("version.off"));
+    else if (!info.latest) status = el("p", { class: "muted" }, t("version.none"));
+    else if (!info.newer.length) status = el("p", { class: "totp-status" }, [el("span", { class: "badge ok" }, t("version.current")), " ", t("version.newest")]);
+    else status = el("p", { class: "totp-status" }, [el("span", { class: "badge warn" }, t("version.behind")), " ", t("version.newer", { count: info.newer.length })]);
+    fill(part, [
+      el("dl", { class: "version-facts" }, [
+        el("dt", {}, t("version.title")),
+        el("dd", {}, info.version && info.url ? link(info.url + "/tag/" + encodeURIComponent(info.version), info.version) : info.version || "—"),
+        el("dt", {}, t("version.repository")),
+        el("dd", {}, info.repository ? link(info.url, info.repository) : "—"),
+      ]),
+      status,
+      info.newer.length ? el("ul", { class: "releases" }, info.newer.map((release) => el("li", {}, [
+        el("strong", {}, link(release.url, release.title)),
+        release.date ? el("span", { class: "muted" }, " · " + release.date) : null,
+        release.notes ? el("p", { class: "release-notes" }, release.notes) : null,
+      ]))) : null,
     ]);
   }
 
