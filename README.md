@@ -274,11 +274,17 @@ The addresses of the page are in `terraform output site_urls`.
 | `POST /api/v1/active-aliases`, `DELETE /api/v1/active-aliases/<name>` | Switch on, switch off |
 | `POST /api/v1/pinned-aliases`, `DELETE /api/v1/pinned-aliases/<name>` | Pin, unpin |
 | `GET /api/v1/domain-options`, `/recipients`, `/labels`; `POST /api/v1/alias-labels` | Domains, forwarding addresses; there are no labels (an empty list; assigning one is accepted and changes nothing) |
+| `GET /api/v1/account-details`, `/api-token-details`, `/app-version` | The account (one, without plan or limits, with the counts of its aliases), the key's name, the addy.io server version the apps check (`ADDY_VERSION`, 1.7.3) |
+| `PATCH /api/v1/aliases/<name>` with `from_name`; `POST /api/v1/alias-recipients`; `POST /api/v1/aliases/<action>/bulk`; `DELETE /api/v1/aliases/<name>/forget` | The sender name; the forwarding address (the first `recipient_ids`, none for the default); bulk get, activate, deactivate, pin, unpin, delete, forget, recipients; forget is delete |
+| `GET`, `POST /api/v1/recipients`; `GET`, `PATCH`, `DELETE /api/v1/recipients/<address>`; `POST /api/v1/recipients/email/resend` | Forwarding addresses: the default one, those aliases use and those added here (kept as `RECIPIENT`); a description; SES's confirmation link again; only an unused added one can be deleted |
+| `GET /api/v1/domains`, `/domains/<domain>` | The alias domains, read-only |
+| `GET /api/v1/usernames`, `/rules`, `/failed-deliveries`, `/blocklist`, `/account-notifications` | Empty lists: there is nothing of the kind here. Changing such things, recipient encryption and permissions, or restoring answers 422 `not_supported` |
 
 Errors are `{"message", "code"}`, validation errors also carry `errors`, as in addy.io. CORS is open: the key travels in a header, no cookie is involved.
 
 - **Bitwarden** (browser extension, desktop or mobile app): Generator → Username → Forwarded email alias → Addy.io; self-host server URL = the address of your page (Bitwarden adds `/api/v1/aliases`), domain name = one of your alias domains, API access token = the key. The Bitwarden web vault cannot use a self-hosted server: its content security policy allows only `app.addy.io`.
 - **addy.io browser extension**: on its sign-in screen choose a self-hosted instance, enter the address of your page and the key. It accepts only keys of letters and digits, 40 or more — which is what the page makes (`hme` and 48 characters).
+- **addy.io apps for Android and iOS**: sign in to a self-hosted instance with the address of your page and the key. They list, create, edit, turn on and off, pin and delete aliases; usernames, domains, rules and failed deliveries are empty here. An app that needs a newer server than `ADDY_VERSION` refuses to sign in.
 
 ```bash
 curl -s https://<your page>/api/v1/aliases -H "Authorization: Bearer $HME_KEY"

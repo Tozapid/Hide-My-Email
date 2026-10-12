@@ -69,7 +69,8 @@ pk = TOKEN, sk = SHA-256 of an API key (id, name, created_by, created_at,
 last_used_at); pk = REPLY, sk = code (alias, sender, name); pk = MSG, sk = id,
 which sorts by time (direction, alias, alias_domain, code, relay, from_*,
 to_*, delivered_to, subject, at, size, spam, attachments); pk = SETTING,
-sk = pgp (signing, updated_at).
+sk = pgp (signing, updated_at); pk = RECIPIENT, sk = a forwarding address
+added through the addy.io API (created_at, description, updated_at).
 """
 
 import base64
@@ -102,6 +103,11 @@ REPLY_PREFIX = "r-"
 # refuses anything else. Keys made before were hme_ and URL-safe characters;
 # they still work, the extension just cannot take them.
 TOKEN_PREFIX = "hme"
+# The addy.io server version /api/v1/app-version reports. The addy.io apps
+# refuse a self-hosted server older than they need (MINIMUMVERSIONCODE in
+# AddyIo.swift and AddyIo.kt: 1.7.3); raise it when a newer app asks for more
+# and still works with this API. 9999 would mean app.addy.io itself.
+ADDY_VERSION = "1.7.3"
 TOKEN_ALPHABET = string.ascii_letters + string.digits
 # The addy.io API is called from Bitwarden's web vault and extension, other
 # origins. It takes a key in a header, never a cookie, so any origin may call.
@@ -176,6 +182,10 @@ ERRORS = {
     "alias_exists": "This address already exists",
     "alias_not_found": "Address not found",
     "not_found": "Not found",
+    "not_supported": "This server does not have that: it is a self-hosted relay with its own forwarding addresses and alias domains",
+    "recipient_not_found": "No such recipient",
+    "recipient_in_use": "This recipient is the default one or an alias forwards to it",
+    "too_many_recipients": "Too many recipients",
     "bad_active": "active must be true or false",
     "bad_signing": "signing must be true or false",
     "nothing_to_change": "Nothing to change",
@@ -736,7 +746,13 @@ def token_owner(event):
 # "description"} and reads data.email. The extension signs in with
 # /domain-options, loads /recipients and /labels, lists /aliases with
 # filter[...], sort and page[...], and creates, edits, turns on and off, pins
-# and deletes aliases. There are no labels here: the list is empty and label
+# and deletes aliases. The addy.io apps for Android and iOS sign in with
+# /account-details and /api-token-details, check /app-version against the
+# server version they need, and open lists this relay does not have
+# (usernames, domains, rules, failed deliveries, blocklist, notifications),
+# which come back empty. The iOS app decodes strictly: fields it declares
+# as strings or booleans must be there and must not be null, times are
+# "YYYY-MM-DD HH:MM:SS" and a page has meta.links and meta.path. There are no labels here: the list is empty and label
 # changes are accepted and dropped. Every random format (random_words,
 # random_characters, uuid) gives the usual random name. Errors are
 # {"message": ...} as in addy.io; validation errors also carry "errors".
@@ -746,7 +762,8 @@ def public_api(method, parts, event):
         return {"statusCode": 204, "headers": dict(CORS_HEADERS), "body": ""}
     try:
         key = token_owner(event)
-        result = public_route(method, parts, event)
+        _addy.clear()
+        result = public_route(method, parts, event, key)
         logger.info("key %s: %s %s", key["id"], method, "/".join(parts))
     except ApiError as exc:
         payload = {"message": exc.message, "code": exc.code}
@@ -767,8 +784,17 @@ def no_content():
     return {"statusCode": 204, "headers": {"cache-control": "no-store"}, "body": ""}
 
 
-def public_route(method, parts, event):
+def public_route(method, parts, event, key=None):
     params = event.get("queryStringParameters") or {}
+    if parts == ["account-details"] and method == "GET":
+        return response(200, {"data": addy_account(key or {})})
+    if parts == ["api-token-details"] and method == "GET":
+        return response(200, {"name": (key or {}).get("name") or "", "created_at": addy_time((key or {}).get("created_at")) or "", "expires_at": None})
+    if parts == ["app-version"] and method == "GET":
+        major, minor, patch = (int(part) for part in ADDY_VERSION.split("."))
+        return response(200, {"version": ADDY_VERSION, "major": major, "minor": minor, "patch": patch})
+    if parts in (["usernames"], ["rules"], ["failed-deliveries"], ["blocklist"], ["account-notifications"]) and method == "GET":
+        return response(200, {"data": []})
     if parts == ["domain-options"] and method == "GET":
         return response(200, {
             "data": alias_domains(),
@@ -777,8 +803,9 @@ def public_route(method, parts, event):
             "defaultAliasFormat": "random_words",
         })
     if parts == ["recipients"] and method == "GET":
-        addresses = sorted({forward_to()} | {destination(item) for item in all_aliases()})
-        return response(200, {"data": [{"id": address, "email": address} for address in addresses]})
+        return response(200, {"data": [addy_recipient(address) for address in sorted(recipient_addresses())]})
+    if len(parts) == 2 and parts[0] == "recipients" and method == "GET":
+        return response(200, {"data": addy_recipient(known_recipient(parts[1]))})
     if parts == ["labels"] and method == "GET":
         return response(200, {"data": []})
     if parts == ["aliases"] and method == "GET":
@@ -787,10 +814,6 @@ def public_route(method, parts, event):
         return response(201, {"data": addy_alias(addy_create(body_json(event)))})
     if len(parts) == 2 and parts[0] == "aliases" and method == "GET":
         return response(200, {"data": addy_alias(existing_alias(parts[1]))})
-    if len(parts) == 2 and parts[0] == "aliases" and method == "PATCH":
-        description = body_json(event).get("description")
-        comment = clean_comment(description[:500] if isinstance(description, str) else description)
-        return response(200, {"data": addy_alias(change_alias(parts[1].lower(), {"comment": comment}))})
     if len(parts) == 2 and parts[0] == "aliases" and method == "DELETE":
         delete_alias(parts[1])
         return no_content()
@@ -806,7 +829,188 @@ def public_route(method, parts, event):
         return no_content()
     if parts == ["alias-labels"] and method == "POST":
         return response(200, {"data": addy_alias(existing_alias(str(body_json(event).get("alias_id") or "")))})
+    if len(parts) == 2 and parts[0] == "aliases" and method == "PATCH":
+        payload = body_json(event)
+        changes = {}
+        if "description" in payload:
+            description = payload.get("description")
+            changes["comment"] = clean_comment(description[:500] if isinstance(description, str) else description)
+        if "from_name" in payload:
+            changes["sender_name"] = clean_sender_name(payload.get("from_name"))
+        return response(200, {"data": addy_alias(change_alias(parts[1].lower(), changes) if changes else existing_alias(parts[1]))})
+    if len(parts) == 3 and parts[0] == "aliases" and parts[2] == "forget" and method == "DELETE":
+        delete_alias(parts[1])
+        return no_content()
+    if parts == ["alias-recipients"] and method == "POST":
+        payload = body_json(event)
+        local = str(payload.get("alias_id") or "").lower()
+        return response(200, {"data": addy_alias(change_alias(local, {"forward_to": addy_forward(payload.get("recipient_ids"))}))})
+    if len(parts) == 3 and parts[0] == "aliases" and parts[2] == "bulk" and method == "POST":
+        return response(200, addy_bulk(parts[1], body_json(event)))
+    # Only the forwarding address of an alias may reply from it: in addy.io
+    # words its recipients are always "attached only".
+    if parts == ["attached-recipients-only"] and method == "POST":
+        return response(200, {"data": addy_alias(existing_alias(str(body_json(event).get("id") or "")))})
+    if parts == ["recipients"] and method == "POST":
+        return response(201, {"data": add_recipient(body_json(event).get("email"))})
+    if len(parts) == 2 and parts[0] == "recipients" and method == "PATCH":
+        return response(200, {"data": describe_recipient(parts[1], body_json(event).get("description"))})
+    if len(parts) == 2 and parts[0] == "recipients" and method == "DELETE":
+        remove_recipient(parts[1])
+        return no_content()
+    if parts == ["recipients", "email", "resend"] and method == "POST":
+        address = known_recipient(str(body_json(event).get("recipient_id") or ""))
+        if addy_mail():
+            ses_v1().verify_email_identity(EmailAddress=address)
+        return response(200, {"data": addy_recipient(address)})
+    if parts == ["domains"] and method == "GET":
+        return response(200, {"data": [addy_domain(domain) for domain in alias_domains()]})
+    if len(parts) == 2 and parts[0] == "domains" and method == "GET":
+        if parts[1].lower() not in alias_domains():
+            raise ApiError(404, "not_found")
+        return response(200, {"data": addy_domain(parts[1].lower())})
+    if parts and parts[0] in ADDY_UNSUPPORTED:
+        raise ApiError(422, "not_supported")
     raise ApiError(404, "not_found")
+
+
+# What the addy.io apps can switch that this relay does not have: recipient
+# encryption and permissions, own domains and usernames, rules, a blocklist,
+# labels, restoring deleted aliases. They get a 422 with a message the apps
+# show, not a 404.
+ADDY_UNSUPPORTED = {
+    "active-recipients", "allowed-recipients", "encrypted-recipients", "recipient-keys", "protected-headers-recipients",
+    "inline-encrypted-recipients", "remove-pgp-keys-recipients", "remove-pgp-signatures-recipients",
+    "domains", "active-domains", "catch-all-domains", "shared-with-family-domains",
+    "usernames", "active-usernames", "catch-all-usernames", "loginable-usernames",
+    "rules", "active-rules", "reorder-rules", "blocklist", "labels", "failed-deliveries",
+    "attached-recipients-only", "aliases",
+}
+
+
+# Bulk actions on aliases (POST /aliases/<action>/bulk with "ids"): the ones
+# done come back in "ids". Forget is delete; nothing is ever deleted softly,
+# so there is nothing to restore.
+def addy_bulk(action, payload):
+    ids = [str(value).lower() for value in (payload.get("ids") or []) if isinstance(value, str)][:100]
+    found = [item for item in (get_alias(local) for local in ids) if item]
+    if action == "get":
+        return {"data": [addy_alias(item) for item in found]}
+    changes = {"activate": {"active": True}, "deactivate": {"active": False}, "pin": {"pinned": True}, "unpin": {"pinned": False}}
+    if action in changes:
+        for item in found:
+            change_alias(item["sk"], changes[action])
+    elif action in ("delete", "forget"):
+        for item in found:
+            delete_alias(item["sk"])
+    elif action == "recipients":
+        forward = addy_forward(payload.get("recipient_ids"))
+        for item in found:
+            change_alias(item["sk"], {"forward_to": forward})
+    elif action == "labels":
+        pass
+    elif action == "restore":
+        found = []
+    else:
+        raise ApiError(404, "not_found")
+    done = [item["sk"] for item in found]
+    return {"message": f"{len(done)} aliases: {action}", "ids": done}
+
+
+# The forwarding address from addy.io recipient_ids: the first one; none
+# means the default address.
+def addy_forward(recipient_ids):
+    ids = recipient_ids if isinstance(recipient_ids, list) else []
+    if not ids:
+        return ""
+    address = known_recipient(str(ids[0]))
+    return "" if address == forward_to() else address
+
+
+# Recipients are the forwarding addresses: the default one, those aliases
+# forward to, and those added through the API (RECIPIENT items, with an
+# optional description).
+def recipient_addresses():
+    return {forward_to()} | {destination(item) for item in all_aliases()} | {item["sk"] for item in query_all("RECIPIENT")}
+
+
+def known_recipient(value):
+    address = str(value or "").strip().lower()
+    if address not in recipient_addresses():
+        raise ApiError(404, "recipient_not_found")
+    return address
+
+
+def add_recipient(value):
+    address = clean_forward(value)
+    if not address:
+        raise ApiError(422, "address_required")
+    if address not in recipient_addresses():
+        if recipient_cap():
+            raise ApiError(422, "too_many_recipients")
+        table().put_item(Item={"pk": "RECIPIENT", "sk": address, "created_at": now_iso()})
+        if addy_mail():
+            # SES mails a link while the account is in the sandbox.
+            ses_v1().verify_email_identity(EmailAddress=address)
+    return addy_recipient(address)
+
+
+def describe_recipient(value, description):
+    address = known_recipient(value)
+    if description is not None and not isinstance(description, str):
+        raise ApiError(422, "bad_comment_type")
+    text = (description or "").strip()[:200]
+    table().update_item(
+        Key={"pk": "RECIPIENT", "sk": address},
+        UpdateExpression="SET #description = :description, #updated_at = :now",
+        ExpressionAttributeNames={"#description": "description", "#updated_at": "updated_at"},
+        ExpressionAttributeValues={":description": text, ":now": now_iso()},
+    )
+    return addy_recipient(address)
+
+
+# Only an added address that no alias uses goes away; the default one and
+# those in use stay.
+def remove_recipient(value):
+    address = known_recipient(value)
+    if address == forward_to() or any(destination(item) == address for item in all_aliases()):
+        raise ApiError(422, "recipient_in_use")
+    table().delete_item(Key={"pk": "RECIPIENT", "sk": address})
+
+
+# An alias domain as an addy.io domain: verified, active, no catch-all.
+def addy_domain(domain):
+    items = [item for item in all_aliases() if alias_domain(item) == domain]
+    since = addy_time(min((item.get("created_at") or "" for item in items), default="")) or ""
+    return {
+        "id": domain,
+        "user_id": "",
+        "domain": domain,
+        "description": None,
+        "from_name": None,
+        "aliases_count": len(items),
+        "family_aliases_count": 0,
+        "default_recipient": addy_recipient(forward_to()),
+        "active": True,
+        "catch_all": False,
+        "shared_with_family": False,
+        "auto_create_regex": None,
+        "domain_verified_at": since or None,
+        "domain_mx_validated_at": since or None,
+        "domain_sending_verified_at": since or None,
+        "created_at": since,
+        "updated_at": since,
+    }
+
+
+# Mail on: SES verifies added recipients. The demo has no mail.
+def addy_mail():
+    return mail_enabled()
+
+
+# The demo caps the recipients visitors add, as it caps their correspondents.
+def recipient_cap():
+    return limit_reached("RECIPIENT", "MAX_RELAYS")
 
 
 def existing_alias(local):
@@ -869,6 +1073,7 @@ def addy_list(params):
             "next": f"{base}?page[number]={number + 1}" if number < last else None,
         },
         "meta": {"current_page": number, "last_page": last, "per_page": size, "total": total,
+                 "path": base, "links": [],
                  "from": (number - 1) * size + 1 if page else None, "to": (number - 1) * size + len(page) if page else None},
     }
 
@@ -881,10 +1086,65 @@ def as_int(value, default):
     return number if number > 0 else default
 
 
+# The account as the addy.io apps show it: one self-hosted account without
+# limits (0 is "unlimited" in addy.io), its domains and the counts of its
+# aliases.
+def addy_account(key):
+    items = all_aliases()
+    active = sum(1 for item in items if item.get("active"))
+    recipients = {forward_to()} | {destination(item) for item in items}
+    return {
+        "id": key.get("id") or "",
+        "username": forward_to().split("@")[0],
+        "from_name": None,
+        "email_subject": None,
+        "banner_location": "off",
+        "spam_warning_behaviour": "off",
+        "wkd_auto_encrypt": 0,
+        "bandwidth": 0,
+        "username_count": 0,
+        "username_limit": 0,
+        "default_username_id": "",
+        "default_recipient_id": forward_to(),
+        "default_alias_domain": domain_name(),
+        "default_alias_format": "random_words",
+        "alias_separator": ".",
+        "subscription": None,
+        "subscription_type": None,
+        "subscription_ends_at": None,
+        "family_plan_role": None,
+        "bandwidth_limit": 0,
+        "recipient_count": len(recipients),
+        "recipient_limit": 0,
+        "active_domain_count": len(alias_domains()),
+        "active_domain_limit": 0,
+        "active_shared_domain_alias_count": 0,
+        "active_shared_domain_alias_limit": 0,
+        "active_rule_count": 0,
+        "active_rule_limit": 0,
+        "total_emails_forwarded": sum(int(item.get("forwarded") or 0) for item in items),
+        "total_emails_blocked": 0,
+        "total_emails_replied": 0,
+        "total_emails_sent": 0,
+        "total_aliases": len(items),
+        "total_active_aliases": active,
+        "total_inactive_aliases": len(items) - active,
+        "total_pinned_aliases": sum(1 for item in items if item.get("pinned")),
+        "total_deleted_aliases": 0,
+        "created_at": addy_time(key.get("created_at")) or "",
+        "updated_at": addy_time(key.get("last_used_at") or key.get("created_at")) or "",
+    }
+
+
+# "2026-10-12T09:04:03Z" as addy.io writes times: "2026-10-12 09:04:03".
+def addy_time(value):
+    return (value or "")[:19].replace("T", " ") or None
+
+
 def addy_alias(item):
     return {
         "id": item["sk"],
-        "user_id": None,
+        "user_id": "",
         "local_part": item["sk"],
         "extension": None,
         "domain": alias_domain(item),
@@ -893,19 +1153,68 @@ def addy_alias(item):
         "pinned": bool(item.get("pinned")),
         "description": item.get("comment") or None,
         "from_name": item.get("sender_name") or None,
-        "recipients": [{"id": destination(item), "email": destination(item)}],
+        "attached_recipients_only": True,
+        "recipients": [addy_recipient(destination(item), item.get("created_at"))],
         "labels": [],
         "emails_forwarded": int(item.get("forwarded") or 0),
         "emails_blocked": 0,
         "emails_replied": 0,
         "emails_sent": 0,
-        "last_forwarded": item.get("last_at") or None,
+        "last_forwarded": addy_time(item.get("last_at")),
         "last_blocked": None,
         "last_replied": None,
         "last_sent": None,
-        "created_at": item.get("created_at") or "",
-        "updated_at": item.get("updated_at") or "",
+        "created_at": addy_time(item.get("created_at")) or "",
+        "updated_at": addy_time(item.get("updated_at") or item.get("created_at")) or "",
         "deleted_at": None,
+    }
+
+
+# What one request of the addy.io API reads more than once: the aliases, the
+# added recipients and whether SES may send to an address. A list of aliases
+# describes the recipient of each, and these would be read again every time.
+_addy = {}
+
+
+def addy_cached(name, read):
+    if name not in _addy:
+        _addy[name] = read()
+    return _addy[name]
+
+
+def addy_verified(address):
+    if not addy_mail():
+        return True
+    if addy_cached("production", production_access):
+        return True
+    return addy_cached("status " + address, lambda: destination_status(address)) == "verified"
+
+
+# A forwarding address as an addy.io recipient, verified when SES may send to
+# it, without encryption. Its times are those of the oldest alias that uses it
+# (or when it was added); the description is the one given through the API.
+def addy_recipient(address, since=None):
+    stored = addy_cached("recipients", lambda: {item["sk"]: item for item in query_all("RECIPIENT")}).get(address, {})
+    users = [item for item in addy_cached("aliases", all_aliases) if destination(item) == address]
+    when = addy_time(since or min([item.get("created_at") or "" for item in users] + ([stored["created_at"]] if stored.get("created_at") else []), default="")) or ""
+    verified = addy_verified(address)
+    return {
+        "id": address,
+        "user_id": "",
+        "email": address,
+        "description": stored.get("description") or None,
+        "can_reply_send": True,
+        "should_encrypt": False,
+        "inline_encryption": False,
+        "protected_headers": False,
+        "remove_pgp_keys": False,
+        "remove_pgp_signatures": False,
+        "fingerprint": None,
+        "active": True,
+        "email_verified_at": (when or addy_time(now_iso())) if verified else None,
+        "aliases_count": len(users),
+        "created_at": when,
+        "updated_at": addy_time(stored.get("updated_at")) or when,
     }
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.7.0
+
+### Added
+
+- More of the addy.io API, for its apps: an alias's sender name (`PATCH /aliases/<name>` with `from_name`), its forwarding address (`POST /alias-recipients`), bulk actions (`POST /aliases/{get,activate,deactivate,pin,unpin,delete,forget,recipients,restore,labels}/bulk`) and `DELETE /aliases/<name>/forget`.
+- Recipients through the API: add one (`POST /recipients`; SES mails a confirmation link while the account is in the sandbox), give it a description (`PATCH /recipients/<address>`), send the link again (`POST /recipients/email/resend`) and delete one no alias uses (`DELETE /recipients/<address>`). Added recipients are kept in the table (`RECIPIENT`) and offered as forwarding addresses; the demo caps them with `max_relays`.
+- `GET /domains` and `GET /domains/<domain>`: the alias domains, read-only.
+- What this relay does not have (recipient encryption and permissions, own domains and usernames, rules, blocklist, labels, restoring) answers 422 with a message the apps show, not 404. Only the forwarding address of an alias may reply, so its recipients are always "attached only".
+
+### Fixed
+
+- The addy.io apps for Android and iOS could not sign in: they ask for `GET /api/v1/account-details`, which answered "Not Found". The API now has `/account-details`, `/api-token-details` and `/app-version` (it reports addy.io 1.7.3, the oldest server the current apps accept), and answers the lists of things this relay does not have (`/usernames`, `/domains`, `/rules`, `/failed-deliveries`, `/blocklist`, `/account-notifications`) with empty lists.
+- The iOS app decodes strictly and failed on null where it wants a value (`DecodingError.valueNotFound … data.default_username_id`). Fields it needs are always there now: `default_username_id`, an alias's `user_id` and `attached_recipients_only`, every field of a recipient, `meta.links` and `meta.path` of a page. `GET /api/v1/recipients/<address>` answers the default recipient the app loads at start. Times come as addy.io writes them, `YYYY-MM-DD HH:MM:SS`.
+
 ## v1.6.1
 
 ### Changed
