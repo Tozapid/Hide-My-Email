@@ -102,6 +102,10 @@ REPLY_PREFIX = "r-"
 # refuses anything else. Keys made before were hme_ and URL-safe characters;
 # they still work, the extension just cannot take them.
 TOKEN_PREFIX = "hme"
+# The addy.io server version /api/v1/app-version reports. The addy.io apps
+# refuse a self-hosted server older than they need (app 6.5 wants 1.7.2);
+# raise it when a newer app asks for more and still works with this API.
+ADDY_VERSION = "1.7.2"
 TOKEN_ALPHABET = string.ascii_letters + string.digits
 # The addy.io API is called from Bitwarden's web vault and extension, other
 # origins. It takes a key in a header, never a cookie, so any origin may call.
@@ -736,7 +740,11 @@ def token_owner(event):
 # "description"} and reads data.email. The extension signs in with
 # /domain-options, loads /recipients and /labels, lists /aliases with
 # filter[...], sort and page[...], and creates, edits, turns on and off, pins
-# and deletes aliases. There are no labels here: the list is empty and label
+# and deletes aliases. The addy.io apps for Android and iOS sign in with
+# /account-details and /api-token-details, check /app-version against the
+# server version they need, and open lists this relay does not have
+# (usernames, domains, rules, failed deliveries, blocklist, notifications),
+# which come back empty. There are no labels here: the list is empty and label
 # changes are accepted and dropped. Every random format (random_words,
 # random_characters, uuid) gives the usual random name. Errors are
 # {"message": ...} as in addy.io; validation errors also carry "errors".
@@ -746,7 +754,7 @@ def public_api(method, parts, event):
         return {"statusCode": 204, "headers": dict(CORS_HEADERS), "body": ""}
     try:
         key = token_owner(event)
-        result = public_route(method, parts, event)
+        result = public_route(method, parts, event, key)
         logger.info("key %s: %s %s", key["id"], method, "/".join(parts))
     except ApiError as exc:
         payload = {"message": exc.message, "code": exc.code}
@@ -767,8 +775,17 @@ def no_content():
     return {"statusCode": 204, "headers": {"cache-control": "no-store"}, "body": ""}
 
 
-def public_route(method, parts, event):
+def public_route(method, parts, event, key=None):
     params = event.get("queryStringParameters") or {}
+    if parts == ["account-details"] and method == "GET":
+        return response(200, {"data": addy_account(key or {})})
+    if parts == ["api-token-details"] and method == "GET":
+        return response(200, {"name": (key or {}).get("name") or "", "created_at": addy_time((key or {}).get("created_at")), "expires_at": None})
+    if parts == ["app-version"] and method == "GET":
+        major, minor, patch = (int(part) for part in ADDY_VERSION.split("."))
+        return response(200, {"version": ADDY_VERSION, "major": major, "minor": minor, "patch": patch})
+    if parts in (["usernames"], ["domains"], ["rules"], ["failed-deliveries"], ["blocklist"], ["account-notifications"]) and method == "GET":
+        return response(200, {"data": []})
     if parts == ["domain-options"] and method == "GET":
         return response(200, {
             "data": alias_domains(),
@@ -879,6 +896,61 @@ def as_int(value, default):
     except (TypeError, ValueError):
         return default
     return number if number > 0 else default
+
+
+# The account as the addy.io apps show it: one self-hosted account without
+# limits (0 is "unlimited" in addy.io), its domains and the counts of its
+# aliases.
+def addy_account(key):
+    items = all_aliases()
+    active = sum(1 for item in items if item.get("active"))
+    recipients = {forward_to()} | {destination(item) for item in items}
+    return {
+        "id": key.get("id") or "",
+        "username": forward_to().split("@")[0],
+        "from_name": None,
+        "email_subject": None,
+        "banner_location": "off",
+        "spam_warning_behaviour": "off",
+        "wkd_auto_encrypt": 0,
+        "bandwidth": 0,
+        "username_count": 0,
+        "username_limit": 0,
+        "default_username_id": None,
+        "default_recipient_id": forward_to(),
+        "default_alias_domain": domain_name(),
+        "default_alias_format": "random_words",
+        "alias_separator": ".",
+        "subscription": None,
+        "subscription_type": None,
+        "subscription_ends_at": None,
+        "family_plan_role": None,
+        "bandwidth_limit": 0,
+        "recipient_count": len(recipients),
+        "recipient_limit": 0,
+        "active_domain_count": len(alias_domains()),
+        "active_domain_limit": 0,
+        "active_shared_domain_alias_count": 0,
+        "active_shared_domain_alias_limit": 0,
+        "active_rule_count": 0,
+        "active_rule_limit": 0,
+        "total_emails_forwarded": sum(int(item.get("forwarded") or 0) for item in items),
+        "total_emails_blocked": 0,
+        "total_emails_replied": 0,
+        "total_emails_sent": 0,
+        "total_aliases": len(items),
+        "total_active_aliases": active,
+        "total_inactive_aliases": len(items) - active,
+        "total_pinned_aliases": sum(1 for item in items if item.get("pinned")),
+        "total_deleted_aliases": 0,
+        "created_at": addy_time(key.get("created_at")),
+        "updated_at": addy_time(key.get("last_used_at") or key.get("created_at")),
+    }
+
+
+# "2026-10-12T09:04:03Z" as addy.io writes times: "2026-10-12 09:04:03".
+def addy_time(value):
+    return (value or "")[:19].replace("T", " ") or None
 
 
 def addy_alias(item):

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.6.2
+
+### Fixed
+
+- The addy.io apps for Android and iOS could not sign in: they ask for `GET /api/v1/account-details`, which answered "Not Found". The API now has `/account-details`, `/api-token-details` and `/app-version` (it reports addy.io 1.7.2, the version the current apps need), and answers the lists of things this relay does not have (`/usernames`, `/domains`, `/rules`, `/failed-deliveries`, `/blocklist`, `/account-notifications`) with empty lists.
+
 ## v1.6.1
 
 ### Changed

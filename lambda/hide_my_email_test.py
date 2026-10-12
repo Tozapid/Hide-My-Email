@@ -847,6 +847,29 @@ class ApiTest(Base):
         self.assertEqual(self.v1("GET", "/recipients", key)[1]["data"], [{"id": OWNER, "email": OWNER}, {"id": "work@example.net", "email": "work@example.net"}])
         self.assertEqual(self.v1("GET", "/labels", key)[1], {"data": []})
 
+    def test_the_addy_app_signs_in(self):
+        made = self.make_key("Phone")
+        key = made["token"]
+        self.alias("bold-fox-10", forward="work@example.net")
+        self.alias("calm-bay-11")
+        self.table.items[("ALIAS", "calm-bay-11")].update(active=False, pinned=True, forwarded=3)
+        status, account, headers = self.v1("GET", "/account-details", key)
+        self.assertEqual((status, headers["access-control-allow-origin"]), (200, "*"))
+        data = account["data"]
+        self.assertEqual((data["id"], data["username"], data["default_alias_domain"], data["default_recipient_id"]), (made["id"], OWNER.split("@")[0], DOMAIN, OWNER))
+        self.assertEqual((data["total_aliases"], data["total_active_aliases"], data["total_inactive_aliases"], data["total_pinned_aliases"]), (2, 1, 1, 1))
+        self.assertEqual((data["total_emails_forwarded"], data["recipient_count"], data["active_domain_count"]), (3, 2, 2))
+        self.assertEqual((data["subscription"], data["recipient_limit"], data["bandwidth_limit"]), (None, 0, 0), "self-hosted: no plan, no limits")
+        self.assertRegex(data["created_at"], r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")
+        status, token, _ = self.v1("GET", "/api-token-details", key)
+        self.assertEqual((status, token["name"], token["expires_at"]), (200, "Phone", None))
+        self.assertEqual(token["created_at"], data["created_at"])
+        status, version, _ = self.v1("GET", "/app-version", key)
+        self.assertEqual((status, version), (200, {"version": app.ADDY_VERSION, "major": 1, "minor": 7, "patch": 2}))
+        for path in ("/usernames", "/domains", "/rules", "/failed-deliveries", "/blocklist", "/account-notifications"):
+            self.assertEqual(self.v1("GET", path, key)[:2], (200, {"data": []}), path)
+        self.assertEqual(self.v1("GET", "/account-details", "not-a-key")[0], 401)
+
     def extension_list(self, key, **params):
         query = {"filter[deleted]": "without", "filter[active]": "", "filter[pinned]": "", "filter[search]": "", "sort": "-created_at",
                  "page[number]": "1", "page[size]": "10", "with": "labels"}
