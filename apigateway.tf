@@ -42,6 +42,17 @@ resource "aws_apigatewayv2_route" "public" {
   target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 
+# Signing out of the addy.io apps (POST /api/auth/logout) with the API key
+# they hold, and their sign-in by password, which this relay does not offer:
+# no Cognito token here either, the function checks the key.
+resource "aws_apigatewayv2_route" "addy_auth" {
+  #checkov:skip=CKV_AWS_309:Callers bring an API key, not a Cognito token; signing out revokes that key and nothing else is answered.
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "ANY /api/auth/{proxy+}"
+  authorization_type = "NONE"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
 # The Web Key Directory: public keys, for anyone. The function answers only
 # /.well-known/openpgpkey/policy and the keys of the aliases.
 resource "aws_apigatewayv2_route" "web_key_directory" {
@@ -81,7 +92,7 @@ resource "aws_apigatewayv2_stage" "default" {
     throttling_rate_limit  = 10
   }
 
-  depends_on = [aws_apigatewayv2_route.api, aws_apigatewayv2_route.public, aws_apigatewayv2_route.web_key_directory]
+  depends_on = [aws_apigatewayv2_route.api, aws_apigatewayv2_route.public, aws_apigatewayv2_route.addy_auth, aws_apigatewayv2_route.web_key_directory]
 }
 
 resource "aws_lambda_permission" "api" {
