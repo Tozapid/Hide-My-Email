@@ -28,7 +28,7 @@ The demo has **no mail**: it neither receives nor sends a single message. Everyt
 
 ## Compared with other services
 
-Apple Hide My Email, SimpleLogin and addy.io solve the same problem well; the difference is who runs the service and whose domain the addresses are on.
+Other alternatives solve the same problem well; the difference is who runs the service and whose domain the addresses are on.
 
 | | 🛡️ **Hide My Email** (this project) | 🔀 **Other alternatives** |
 | --- | --- | --- |
@@ -45,8 +45,6 @@ Apple Hide My Email, SimpleLogin and addy.io solve the same problem well; the di
 | 🔌 **API, Bitwarden, browser extension** | ✅ addy.io-compatible: Bitwarden and the addy.io extension | ⚠️ Depends on the service |
 | 🔐 **PGP encryption of forwarded mail** | 🔜 Planned | ⚠️ Some of them |
 | 📨 **Message log with attachments** | ✅ Text-only view, kept in your bucket | ❌ Usually not |
-
-Other alternatives are services such as [Apple Hide My Email](https://www.apple.com/icloud/), [SimpleLogin](https://simplelogin.io/) and [addy.io](https://addy.io/); their plans and features change, see their pages (October 2026).
 
 What you get by running it yourself:
 
@@ -245,7 +243,7 @@ The jobs get AWS credentials from GitHub's OIDC token (`permissions: id-token: w
 
 ### Versions and releases
 
-Every entry of [`CHANGELOG.md`](CHANGELOG.md) starts with a version and a date, and may add a title: `## v1.4.0 — 2026-10-12` or `## v1.4.0 — 2026-10-12 — versions`. A pull request that changes the site adds an entry with a higher version: minor for a feature, patch for a fix. The check `ci / Terraform format and validate` refuses a newest entry without one.
+Every entry of [`CHANGELOG.md`](CHANGELOG.md) starts with its version, optionally followed by a date or a title: `## v1.4.0`, `## v1.4.0 — 2026-10-12` or `## v1.4.0 — versions`. A pull request that changes the site adds an entry with a higher version: minor for a feature, patch for a fix. The check `ci / Terraform format and validate` refuses a newest entry without one.
 
 - The site takes its version from the newest entry when Terraform deploys it (`local.version` in `lambda.tf`).
 - After `main` is deployed, the job `ci / Release` makes the tag and the GitHub release of the newest entry, with its text as the notes, unless that version is out already. A pull request without a new entry releases nothing.
