@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.7.1
+
+### Fixed
+
+- The addy.io apps could not sign out: `POST /api/auth/logout` met the Cognito authorizer of `/api/*` and got 401, and the apps leave only on a 204. `/api/auth/*` has its own route without Cognito; signing out answers 204 and revokes the key the app holds. Signing in by password (`/api/auth/login`) answers 422: the apps take an API key.
+
 ## v1.7.0
 
 ### Added

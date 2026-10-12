@@ -284,7 +284,7 @@ Errors are `{"message", "code"}`, validation errors also carry `errors`, as in a
 
 - **Bitwarden** (browser extension, desktop or mobile app): Generator → Username → Forwarded email alias → Addy.io; self-host server URL = the address of your page (Bitwarden adds `/api/v1/aliases`), domain name = one of your alias domains, API access token = the key. The Bitwarden web vault cannot use a self-hosted server: its content security policy allows only `app.addy.io`.
 - **addy.io browser extension**: on its sign-in screen choose a self-hosted instance, enter the address of your page and the key. It accepts only keys of letters and digits, 40 or more — which is what the page makes (`hme` and 48 characters).
-- **addy.io apps for Android and iOS**: sign in to a self-hosted instance with the address of your page and the key. They list, create, edit, turn on and off, pin and delete aliases; usernames, domains, rules and failed deliveries are empty here. An app that needs a newer server than `ADDY_VERSION` refuses to sign in.
+- **addy.io apps for Android and iOS**: sign in to a self-hosted instance with the address of your page and the key. They list, create, edit, turn on and off, pin and delete aliases; usernames, domains, rules and failed deliveries are empty here. An app that needs a newer server than `ADDY_VERSION` refuses to sign in. Signing out of an app (`POST /api/auth/logout`) revokes its key; the username and password tab of their sign-in screen is not offered here.
 
 ```bash
 curl -s https://<your page>/api/v1/aliases -H "Authorization: Bearer $HME_KEY"

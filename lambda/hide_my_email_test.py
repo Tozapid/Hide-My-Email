@@ -993,6 +993,24 @@ class ApiTest(Base):
         self.assertEqual(self.v1("POST", "/domains", key, {"domain": "mine.test"})[1]["code"], "not_supported")
         self.assertEqual(self.v1("POST", "/rules", key, {})[1]["code"], "not_supported")
 
+    def auth(self, path, key=None, body=None):
+        event = {"rawPath": "/api/auth/" + path, "headers": {"authorization": f"Bearer {key}"} if key else {},
+                 "requestContext": {"http": {"method": "POST"}}, "body": json.dumps(body) if body is not None else None}
+        result = app.handler(event, None)
+        return result["statusCode"], json.loads(result["body"]) if result["body"] else None
+
+    def test_the_addy_app_signs_out_and_its_key_goes(self):
+        made = self.make_key("Phone")
+        other = self.make_key("Bitwarden")["token"]
+        self.assertEqual(self.auth("logout", made["token"]), (204, None), "the app leaves only on a 204")
+        self.assertEqual(self.v1("GET", "/account-details", made["token"])[0], 401, "the key is revoked")
+        self.assertEqual(self.v1("GET", "/account-details", other)[0], 200, "other keys stay")
+        self.assertEqual(self.auth("logout", made["token"])[0], 204, "signing out again still works")
+        self.assertEqual(self.auth("logout")[0], 204)
+        status, body = self.auth("login", body={"username": OWNER, "password": "x"})
+        self.assertEqual((status, body["code"]), (422, "api_key_only"))
+        self.assertTrue(body["message"])
+
     def extension_list(self, key, **params):
         query = {"filter[deleted]": "without", "filter[active]": "", "filter[pinned]": "", "filter[search]": "", "sort": "-created_at",
                  "page[number]": "1", "page[size]": "10", "with": "labels"}

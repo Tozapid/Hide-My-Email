@@ -182,6 +182,7 @@ ERRORS = {
     "alias_exists": "This address already exists",
     "alias_not_found": "Address not found",
     "not_found": "Not found",
+    "api_key_only": "Sign in with an API key: make one in the settings of the page (API keys)",
     "not_supported": "This server does not have that: it is a self-hosted relay with its own forwarding addresses and alias domains",
     "recipient_not_found": "No such recipient",
     "recipient_in_use": "This recipient is the default one or an alias forwards to it",
@@ -536,6 +537,8 @@ def api(event):
     parts = [unquote(part) for part in (event.get("rawPath") or "/").split("/") if part]
     if parts[:2] == ["api", "v1"]:
         return public_api(method, parts[2:], event)
+    if parts[:2] == ["api", "auth"]:
+        return addy_auth(method, parts[2:], event)
     if parts[:2] == [".well-known", "openpgpkey"] and pgp_enabled():
         return web_key_directory(parts[2:], event)
     try:
@@ -777,6 +780,32 @@ def public_api(method, parts, event):
         result = response(500, {"message": ERRORS["internal"], "code": "internal"})
     result["headers"] = {**result["headers"], **CORS_HEADERS}
     logger.info("%s /api/v1/%s -> %s", method, "/".join(parts), result["statusCode"])
+    return result
+
+
+# /api/auth of addy.io. The apps sign out with POST /logout and leave the
+# account only on a 204: the key they send is revoked, as addy.io revokes the
+# token of a device that signs out. A key that is already gone signs out too.
+# Signing in by password (/login, /mfa) is not offered here: the apps take
+# an API key made on the page.
+def addy_auth(method, parts, event):
+    if method == "OPTIONS":
+        return {"statusCode": 204, "headers": dict(CORS_HEADERS), "body": ""}
+    if parts == ["logout"] and method == "POST":
+        try:
+            key = token_owner(event)
+        except ApiError:
+            key = None
+        if key:
+            table().delete_item(Key={"pk": "TOKEN", "sk": key["sk"]})
+            logger.info("key %s revoked: signed out", key["id"])
+        result = {"statusCode": 204, "headers": {"cache-control": "no-store"}, "body": ""}
+    elif parts in (["login"], ["mfa"]) and method == "POST":
+        result = response(422, {"message": ERRORS["api_key_only"], "code": "api_key_only", "errors": {"api_key_only": [ERRORS["api_key_only"]]}})
+    else:
+        result = response(404, {"message": ERRORS["not_found"], "code": "not_found"})
+    result["headers"] = {**result["headers"], **CORS_HEADERS}
+    logger.info("%s /api/auth/%s -> %s", method, "/".join(parts), result["statusCode"])
     return result
 
 
