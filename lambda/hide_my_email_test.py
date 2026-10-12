@@ -8,7 +8,10 @@ import io
 import json
 import re
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -188,6 +191,7 @@ class FakeSes:
         self.identities.setdefault(EmailAddress, False)
 
     def send_email(self, FromEmailAddress, Destination, Content):
+        self.raw = getattr(self, "raw", []) + [Content["Raw"]["Data"]]
         message = email.message_from_bytes(Content["Raw"]["Data"], policy=email.policy.default)
         self.sources.append(FromEmailAddress)
         self.sent.append((email.utils.parseaddr(FromEmailAddress)[1], Destination["ToAddresses"], message))
@@ -213,16 +217,16 @@ def passed(**overrides):
 class Base(unittest.TestCase):
     def setUp(self):
         os.environ.update(DOMAIN=DOMAIN, DOMAINS=f"{DOMAIN},{OTHER}", FORWARD_TO=OWNER, MAIL_BUCKET="mail", MAIL_PREFIX="incoming/", MESSAGES_PREFIX="messages/", ATTACHMENTS_PREFIX="attachments/", TABLE_NAME="relay",
-                          SIGNING_KEY_PARAMETER="/hide-my-email/key", CLOUDFRONT_KEY_PAIR_ID="K123")
+                          SIGNING_KEY_PARAMETER="/hide-my-email/key", CLOUDFRONT_KEY_PAIR_ID="K123", PGP_SECRET_PARAMETER="/hide-my-email/pgp-secret")
         self.table = app._table = FakeTable()
         self.s3 = app._s3 = FakeS3()
         self.ses = app._ses = app._ses_v1 = FakeSes()
         self.ssm = app._ssm = FakeSsm()
-        app._signing_key = None
+        app._signing_key = app._pgp_secret = None
         self.count = 0
 
     def tearDown(self):
-        app._table = app._s3 = app._ses = app._ses_v1 = app._ssm = app._signing_key = None
+        app._table = app._s3 = app._ses = app._ses_v1 = app._ssm = app._signing_key = app._pgp_secret = None
 
     def deliver(self, raw, recipients, source, receipt=None):
         self.count += 1
@@ -941,6 +945,210 @@ class ApiTest(Base):
         self.assertEqual(self.call("GET", "/api/aliases", verified="false")[0], 403)
         self.assertEqual(self.call("GET", "/api/me")[1]["forward_to"], OWNER)
         self.assertEqual(self.call("GET", "/api/nowhere")[0], 404)
+
+
+GPG = shutil.which("gpg")
+try:
+    import cryptography  # noqa: F401  the Lambda layer has it
+    CRYPTOGRAPHY = True
+except ImportError:
+    CRYPTOGRAPHY = False
+try:
+    import cryptography  # noqa: F401  the Lambda layer has it
+    CRYPTOGRAPHY = True
+except ImportError:
+    CRYPTOGRAPHY = False
+
+
+# The signed part and the signature of a multipart/signed message, cut out of
+# its bytes exactly as a mail client does (RFC 3156).
+def signed_parts(raw):
+    head, body = raw.split(b"\r\n\r\n", 1)
+    boundary = re.search(rb'boundary="([^"]+)"', head).group(1)
+    first = body.index(b"--" + boundary + b"\r\n") + len(boundary) + 4
+    middle = body.index(b"\r\n--" + boundary + b"\r\n", first)
+    signature_part = body[middle + len(boundary) + 6:body.index(b"\r\n--" + boundary + b"--")]
+    return body[first:middle], signature_part.split(b"\r\n\r\n", 1)[1]
+
+
+@unittest.skipUnless(CRYPTOGRAPHY, "needs the cryptography package")
+@unittest.skipUnless(CRYPTOGRAPHY, "needs the cryptography package of the Lambda layer")
+class SignatureTest(Base):
+    event = ApiTest.event
+    call = ApiTest.call
+
+    def setUp(self):
+        super().setUp()
+        self.home = tempfile.mkdtemp(prefix="hme-gpg-")
+        self.addCleanup(shutil.rmtree, self.home, True)
+
+    def gpg(self, *args, data=None):
+        result = subprocess.run([GPG, "--homedir", self.home, "--batch", "--status-fd", "1", *args], input=data, capture_output=True)
+        return result.returncode, result.stdout.decode(errors="replace")
+
+    def wkd(self, path, site, local=None):
+        result = app.handler({
+            "rawPath": "/.well-known/openpgpkey/" + path,
+            "requestContext": {"http": {"method": "GET"}},
+            "headers": {"X-Hide-My-Email-Site": site} if site else {},
+            "queryStringParameters": {"l": local} if local else None,
+        }, None)
+        body = base64.b64decode(result["body"]) if result.get("isBase64Encoded") else result["body"]
+        return result["statusCode"], result["headers"], body
+
+    # The key as a mail client finds it: by the hash of the local part on the
+    # domain of the address.
+    def verify(self, raw, address):
+        local, domain = address.split("@")
+        status, headers, key = self.wkd("hu/" + app.pgp.wkd_hash(local), domain, local)
+        self.assertEqual((status, headers["Content-Type"]), (200, "application/octet-stream"))
+        self.assertEqual(self.gpg("--import", data=key)[0], 0)
+        part, signature = signed_parts(raw)
+        path = os.path.join(self.home, "part")
+        with open(path, "wb") as handle:
+            handle.write(part)
+        status, out = self.gpg("--verify", "-", path, data=signature)
+        self.assertEqual(status, 0, out)
+        self.assertIn("GOODSIG", out)
+        self.assertIn(address, out)
+        return email.message_from_bytes(part, policy=email.policy.default)
+
+    @unittest.skipUnless(GPG, "gpg is not installed")
+    def test_a_reply_is_signed_and_its_key_is_found_by_wkd(self):
+        alias = self.alias("sunny-raven-80", domain=OTHER)
+        self.deliver(raw_message("Bob <bob@shop.test>", alias), [alias], "bob@shop.test")
+        relay = self.ses.sent[-1][0]
+        text = "Спасибо, Боб!   \n" + "длинная строка " * 40 + "\nFrom here on it is fine.\n"
+        self.deliver(raw_message(f"Me <{OWNER}>", relay, subject="Re: Hello", body=text), [relay], OWNER)
+        raw = self.ses.raw[-1]
+        message = email.message_from_bytes(raw, policy=email.policy.default)
+        self.assertEqual((message.get_content_type(), message.get_param("protocol"), message.get_param("micalg")), ("multipart/signed", "application/pgp-signature", "pgp-sha256"))
+        self.assertEqual(str(message["Subject"]), "Re: Hello")
+        part = self.verify(raw, alias)
+        self.assertIn(part["Content-Transfer-Encoding"], ("quoted-printable", "base64"), "safe from re-encoding on the way")
+        self.assertEqual(part.get_content(), text.replace("\n", "\n"))
+        self.assertTrue(all(byte < 128 for byte in raw), "seven-bit throughout")
+
+    @unittest.skipUnless(GPG, "gpg is not installed")
+    def test_forwarded_mail_is_signed_by_its_relay_address(self):
+        alias = self.alias("sunny-raven-80", domain=OTHER)
+        self.deliver(raw_message("Bob <bob@shop.test>", alias, body="Привет!  \nFrom the shop.\n"), [alias], "bob@shop.test")
+        relay, _, message = self.ses.sent[-1]
+        self.assertEqual(message.get_content_type(), "multipart/signed")
+        self.assertEqual(message["From"].addresses[0].addr_spec, relay)
+        part = self.verify(self.ses.raw[-1], relay)
+        self.assertEqual(part.get_content().replace("\r\n", "\n"), "Привет!  \nFrom the shop.\n", "trailing spaces and From kept")
+        local = relay.split("@")[0]
+        name = "hu/" + app.pgp.wkd_hash(local)
+        self.assertEqual(self.wkd(name, OTHER)[0], 200, "found by the hash alone too")
+        self.assertEqual(self.wkd(name, DOMAIN, local)[0], 404, "the relay lives on the other domain")
+        self.assertEqual(self.wkd(name, OTHER, "x" + local)[0], 404, "a made-up name with the same code")
+        self.assertNotEqual(self.wkd(name, OTHER)[2], self.wkd("hu/" + app.pgp.wkd_hash("sunny-raven-80"), OTHER)[2], "a key of its own")
+
+    @unittest.skipUnless(GPG, "gpg is not installed")
+    def test_a_signed_message_is_forwarded_with_its_own_signature_intact(self):
+        alias = self.alias()
+        inner = (
+            b'Content-Type: multipart/signed; micalg=pgp-sha256; protocol="application/pgp-signature"; boundary="in"\r\n'
+            b"\r\n--in\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n"
+            + "Подписано отправителем \r\n".encode()
+            + b"--in\r\nContent-Type: application/pgp-signature\r\n\r\n-----BEGIN PGP SIGNATURE-----\r\n\r\nxx\r\n-----END PGP SIGNATURE-----\r\n--in--\r\n"
+        )
+        raw = b"From: Bob <bob@shop.test>\r\nTo: " + alias.encode() + b"\r\nSubject: Signed\r\nMIME-Version: 1.0\r\n" + inner
+        self.deliver(raw, [alias], "bob@shop.test")
+        relay = self.ses.sent[-1][0]
+        part = self.verify(self.ses.raw[-1], relay)
+        self.assertEqual(part.get_content_type(), "multipart/signed")
+        self.assertEqual(part.get_payload()[0]["Content-Transfer-Encoding"], "8bit", "the sender's part as it was")
+
+    @unittest.skipUnless(GPG, "gpg is not installed")
+    def test_a_new_message_is_signed_and_logged_signed(self):
+        alias = self.alias(sender_name="Shop Buyer")
+        sent = self.call("POST", "/api/messages", {"alias": "quiet-river-42", "to": "bob@shop.test", "subject": "Hi", "text": "Hello, Bob."})[1]
+        self.verify(self.ses.raw[-1], alias)
+        self.assertEqual(self.s3.objects[("mail", "messages/" + sent["id"])], self.ses.raw[-1], "the log keeps what was sent")
+        self.assertIn("Hello, Bob.", self.call("GET", f"/api/messages/{sent['id']}")[1]["text"])
+
+    def test_the_directory_answers_for_its_own_domain_only(self):
+        self.alias("sunny-raven-80", domain=OTHER)
+        name = "hu/" + app.pgp.wkd_hash("sunny-raven-80")
+        status, headers, body = self.wkd("policy", OTHER)
+        self.assertEqual((status, body, headers["Access-Control-Allow-Origin"]), (200, "", "*"))
+        self.assertEqual(self.wkd(name, OTHER, "sunny-raven-80")[0], 200)
+        self.assertEqual(self.wkd(name, OTHER)[0], 200, "found by the hash alone too")
+        self.assertEqual(self.wkd(name, DOMAIN, "sunny-raven-80")[0], 404, "the alias lives on the other domain")
+        self.assertEqual(self.wkd("hu/" + app.pgp.wkd_hash("nobody"), OTHER, "nobody")[0], 404)
+        first = self.wkd(name, OTHER)[2]
+        app._pgp_secret = None
+        self.assertEqual(self.wkd(name, OTHER)[2], first, "the same key every time")
+        self.assertIn("pgp_created", self.table.items[("ALIAS", "sunny-raven-80")])
+
+    def test_the_page_shows_the_key(self):
+        self.alias()
+        status, key = self.call("GET", "/api/aliases/quiet-river-42/key")
+        self.assertEqual(status, 200)
+        self.assertRegex(key["fingerprint"], r"^[0-9A-F]{40}$")
+        self.assertEqual(key["user_id"], f"quiet-river-42@{DOMAIN}")
+        self.assertTrue(key["key"].startswith("-----BEGIN PGP PUBLIC KEY BLOCK-----"))
+        self.assertEqual(key["wkd"], f"https://{DOMAIN}/.well-known/openpgpkey/hu/{app.pgp.wkd_hash('quiet-river-42')}?l=quiet-river-42")
+        self.assertEqual(self.call("GET", "/api/aliases/quiet-river-42/key")[1]["fingerprint"], key["fingerprint"])
+        self.assertEqual(self.call("GET", "/api/aliases/nobody/key")[0], 404)
+        os.environ["MAIL_ENABLED"] = "false"
+        self.addCleanup(os.environ.pop, "MAIL_ENABLED", None)
+        self.assertEqual(self.call("GET", "/api/aliases/quiet-river-42/key")[1]["wkd"], f"/.well-known/openpgpkey/hu/{app.pgp.wkd_hash('quiet-river-42')}?l=quiet-river-42", "the demo page is elsewhere")
+        self.assertEqual(self.wkd("hu/" + app.pgp.wkd_hash("quiet-river-42"), None, "quiet-river-42")[0], 200, "no domain header: the domain of the aliases")
+
+    def test_the_page_turns_the_signatures_off(self):
+        alias = self.alias("sunny-raven-80", domain=OTHER)
+        self.deliver(raw_message("bob@shop.test", alias), [alias], "bob@shop.test")
+        relay = self.ses.sent[-1][0]
+        self.assertEqual(self.call("GET", "/api/me")[1]["pgp"], {"signing": True}, "on until turned off")
+        self.assertEqual(self.call("PUT", "/api/settings/pgp", {"signing": "no"})[0], 400)
+        self.assertEqual(self.call("PUT", "/api/settings/pgp", {"signing": False}), (200, {"signing": False}))
+        self.assertEqual(self.call("GET", "/api/me")[1]["pgp"], {"signing": False})
+        self.deliver(raw_message("bob@shop.test", alias), [alias], "bob@shop.test")
+        self.assertEqual(self.ses.sent[-1][2].get_content_type(), "text/plain", "forwarded unsigned")
+        self.deliver(raw_message(OWNER, relay, subject="Re: Hello"), [relay], OWNER)
+        self.assertEqual(self.ses.sent[-1][2].get_content_type(), "text/plain", "no signature.asc")
+        self.call("POST", "/api/messages", {"alias": "sunny-raven-80", "to": "bob@shop.test", "subject": "Hi", "text": "Hello, Bob."})
+        self.assertEqual(self.ses.sent[-1][2].get_content_type(), "text/plain")
+        self.assertEqual(self.call("GET", "/api/aliases/sunny-raven-80/key")[0], 404, "the page shows no key")
+        name = "hu/" + app.pgp.wkd_hash("sunny-raven-80")
+        status, _, key = self.wkd(name, OTHER)
+        self.assertEqual(status, 200, "the directory stays for the mail already signed")
+        self.call("PUT", "/api/settings/pgp", {"signing": True})
+        self.call("POST", "/api/messages", {"alias": "sunny-raven-80", "to": "bob@shop.test", "subject": "Hi", "text": "Hello again."})
+        self.assertEqual(self.ses.sent[-1][2].get_content_type(), "multipart/signed")
+        self.assertEqual(self.wkd(name, OTHER)[2], key, "the same key after all")
+
+    def test_without_pgp_there_is_none_of_it(self):
+        alias = self.alias("sunny-raven-80", domain=OTHER)
+        os.environ["PGP"] = "false"
+        self.addCleanup(os.environ.pop, "PGP", None)
+        self.assertIsNone(self.call("GET", "/api/me")[1]["pgp"])
+        self.assertEqual(self.call("PUT", "/api/settings/pgp", {"signing": True})[0], 404)
+        self.call("POST", "/api/messages", {"alias": "sunny-raven-80", "to": "bob@shop.test", "subject": "Hi", "text": "Hello, Bob."})
+        self.assertEqual(self.ses.sent[-1][2].get_content_type(), "text/plain")
+        self.assertEqual(self.call("GET", "/api/aliases/sunny-raven-80/key")[0], 404)
+        self.assertEqual(self.wkd("policy", OTHER)[0], 404)
+        self.assertEqual(self.wkd("hu/" + app.pgp.wkd_hash("sunny-raven-80"), OTHER)[0], 404)
+        self.assertNotIn("pgp_created", self.table.items[("ALIAS", "sunny-raven-80")], "no key made")
+        self.assertIn(alias, self.ses.sent[-1][2]["From"])
+
+    def test_a_reply_goes_out_even_if_signing_fails(self):
+        alias = self.alias()
+        self.deliver(raw_message("bob@shop.test", alias), [alias], "bob@shop.test")
+        relay = self.ses.sent[-1][0]
+
+        def broken(*args):
+            raise RuntimeError("no layer")
+
+        real = app.pgp.SigningKey
+        app.pgp.SigningKey = broken
+        self.addCleanup(setattr, app.pgp, "SigningKey", real)
+        self.deliver(raw_message(OWNER, relay, subject="Re: Hello"), [relay], OWNER)
+        self.assertEqual(self.ses.sent[-1][1], ["bob@shop.test"])
+        self.assertEqual(self.ses.sent[-1][2].get_content_type(), "text/plain")
 
 
 if __name__ == "__main__":

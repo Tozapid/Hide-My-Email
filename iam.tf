@@ -51,11 +51,12 @@ data "aws_iam_policy_document" "relay" {
     resources = [aws_dynamodb_table.relay.arn]
   }
 
-  # The private key that signs the CloudFront cookie for /attachments/*.
+  # The private key that signs the CloudFront cookie for /attachments/* and
+  # the secret of the OpenPGP keys of the aliases.
   statement {
     sid       = "ReadAttachmentsSigningKey"
     actions   = ["ssm:GetParameter"]
-    resources = [aws_ssm_parameter.attachments_signing_key.arn]
+    resources = concat([aws_ssm_parameter.attachments_signing_key.arn], var.pgp_enabled ? [aws_ssm_parameter.pgp_secret.arn] : [])
   }
 
   # Mail only. While the account is in the SES sandbox SES also checks each

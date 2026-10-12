@@ -2,6 +2,15 @@
 
 All notable changes of the project. Newest first.
 
+## 2026-10-12 — OpenPGP signatures and the Web Key Directory
+
+- Everything SES sends is signed with OpenPGP (PGP/MIME `multipart/signed`): replies and new messages by the key of the alias, forwarded mail by the key of the relay address it comes from. Ed25519 keys with the address as the user id and no expiry, derived from the secret `/<name>/pgp-secret` (`pgp.tf`, `prevent_destroy`) and never stored; the alias keeps only the time its key was made. Parts a sender signed or encrypted are forwarded as they are.
+- Web Key Directory on every domain: `/.well-known/openpgpkey/policy` and `/hu/<hash>` (by `?l=` or by the hash alone), through a CloudFront path and a public API Gateway route.
+- The dialog of an alias shows its key: fingerprint, WKD link, "Download key (.asc)". API: `GET /api/aliases/<name>/key`.
+- Settings → PGP switches the signatures off and on (`PUT /api/settings/pgp`); WKD stays. The variable `pgp_enabled` (`true`) removes PGP altogether, all but the secret.
+- The `cryptography` package comes in the Lambda layer `<name>-cryptography`, built while planning by `lambda/build_layer.py` (provider `hashicorp/external`); `hashicorp/random` makes the secret. The deploy role needs the Lambda layers of the prefix, and the planner Python 3 with access to PyPI.
+- Tests check the keys and signatures with GnuPG; without `cryptography` they are skipped.
+
 ## 2026-10-12 — correspondents and new messages
 
 - Correspondents in the dialog of an alias: everyone with a reply address for it, who wrote or was added. Adding one makes their reply address at once; mail to it from the forwarding address goes to them from the alias, so a conversation can start from your mail client. API: `GET /api/aliases/<name>/relays`, `POST /api/relays`, `DELETE /api/relays/<reply address>`.
