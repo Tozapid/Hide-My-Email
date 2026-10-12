@@ -44,6 +44,27 @@ DOMAIN = "hide.example.com"
 OTHER = "hide.example.net"
 
 
+# The fields the addy.io iOS app declares without "?" (addy_shared/models in
+# anonaddy/addy-ios): its decoder fails on a missing or null one.
+IOS_REQUIRED = {
+    "account": {"id": str, "username": str, "banner_location": str, "bandwidth": int, "username_count": int, "username_limit": int,
+                "default_username_id": str, "default_recipient_id": str, "default_alias_domain": str, "default_alias_format": str,
+                "recipient_count": int, "active_domain_count": int, "active_shared_domain_alias_count": int, "active_rule_count": int,
+                "total_emails_forwarded": int, "total_emails_blocked": int, "total_emails_replied": int, "total_emails_sent": int,
+                "total_aliases": int, "total_active_aliases": int, "total_inactive_aliases": int, "total_pinned_aliases": int,
+                "total_deleted_aliases": int, "created_at": str, "updated_at": str},
+    "alias": {"id": str, "user_id": str, "local_part": str, "domain": str, "email": str, "active": bool, "pinned": bool,
+              "attached_recipients_only": bool, "emails_forwarded": int, "emails_blocked": int, "emails_replied": int, "emails_sent": int,
+              "created_at": str, "updated_at": str},
+    "recipient": {"id": str, "user_id": str, "email": str, "can_reply_send": bool, "should_encrypt": bool, "inline_encryption": bool,
+                  "protected_headers": bool, "remove_pgp_keys": bool, "remove_pgp_signatures": bool, "active": bool, "created_at": str, "updated_at": str},
+    "meta": {"current_page": int, "last_page": int, "links": list, "path": str, "per_page": int, "total": int},
+    "token": {"created_at": str, "name": str},
+    "version": {"major": int, "minor": int, "patch": int},
+}
+ADDY_TIME = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")
+
+
 class ConditionFailed(Exception):
     response = {"Error": {"Code": "ConditionalCheckFailedException"}}
 
@@ -810,7 +831,7 @@ class ApiTest(Base):
         self.assertEqual((status, created["data"]["email"]), (201, f"shop.two@{DOMAIN}"))
         status, listed, _ = self.v1("GET", "/aliases", key)
         self.assertEqual({item["id"] for item in listed["data"]}, {"bold-fox-10", "shop.two"})
-        self.assertEqual(self.v1("GET", "/aliases/shop.two", key)[1]["data"]["recipients"], [{"id": OWNER, "email": OWNER}])
+        self.assertEqual([(each["id"], each["email"]) for each in self.v1("GET", "/aliases/shop.two", key)[1]["data"]["recipients"]], [(OWNER, OWNER)])
         self.assertEqual(self.v1("DELETE", "/aliases/shop.two", key)[:2], (204, None))
         self.assertEqual(self.v1("DELETE", "/aliases/shop.two", key)[0], 404)
         self.assertEqual(self.v1("GET", "/aliases/shop.two", key)[0], 404)
@@ -844,7 +865,7 @@ class ApiTest(Base):
         status, created, _ = self.v1("POST", "/aliases", key, {"domain": OTHER, "description": "x"})
         self.assertEqual((status, created["data"]["domain"]), (201, OTHER))
         self.assertEqual(created["data"]["email"], f"{created['data']['local_part']}@{OTHER}")
-        self.assertEqual(self.v1("GET", "/recipients", key)[1]["data"], [{"id": OWNER, "email": OWNER}, {"id": "work@example.net", "email": "work@example.net"}])
+        self.assertEqual([(each["id"], each["email"]) for each in self.v1("GET", "/recipients", key)[1]["data"]], [(OWNER, OWNER), ("work@example.net", "work@example.net")])
         self.assertEqual(self.v1("GET", "/labels", key)[1], {"data": []})
 
     def test_the_addy_app_signs_in(self):
@@ -865,10 +886,45 @@ class ApiTest(Base):
         self.assertEqual((status, token["name"], token["expires_at"]), (200, "Phone", None))
         self.assertEqual(token["created_at"], data["created_at"])
         status, version, _ = self.v1("GET", "/app-version", key)
-        self.assertEqual((status, version), (200, {"version": app.ADDY_VERSION, "major": 1, "minor": 7, "patch": 2}))
+        self.assertEqual((status, version), (200, {"version": app.ADDY_VERSION, "major": 1, "minor": 7, "patch": 3}))
         for path in ("/usernames", "/domains", "/rules", "/failed-deliveries", "/blocklist", "/account-notifications"):
             self.assertEqual(self.v1("GET", path, key)[:2], (200, {"data": []}), path)
         self.assertEqual(self.v1("GET", "/account-details", "not-a-key")[0], 401)
+
+    def assert_ios(self, kind, value):
+        for name, kind_type in IOS_REQUIRED[kind].items():
+            self.assertIn(name, value, f"{kind}.{name}")
+            self.assertIsInstance(value[name], kind_type, f"{kind}.{name}")
+            if kind_type is int:
+                self.assertNotIsInstance(value[name], bool, f"{kind}.{name}")
+        for name in ("created_at", "updated_at", "email_verified_at", "last_forwarded"):
+            if value.get(name):
+                self.assertRegex(value[name], ADDY_TIME, f"{kind}.{name}")
+
+    def test_the_ios_app_decodes_every_answer(self):
+        key = self.make_key("Phone")["token"]
+        self.alias("bold-fox-10", forward="work@example.net")
+        self.deliver(raw_message("news@shop.test", f"bold-fox-10@{DOMAIN}"), [f"bold-fox-10@{DOMAIN}"], "news@shop.test")
+        self.assert_ios("version", self.v1("GET", "/app-version", key)[1])
+        account = self.v1("GET", "/account-details", key)[1]["data"]
+        self.assert_ios("account", account)
+        self.assert_ios("token", self.v1("GET", "/api-token-details", key)[1])
+        status, recipient, _ = self.v1("GET", "/recipients/" + account["default_recipient_id"], key)
+        self.assertEqual(status, 200, "the splash screen loads the default recipient")
+        self.assert_ios("recipient", recipient["data"])
+        self.assertEqual(self.v1("GET", "/recipients/nobody@example.net", key)[0], 404)
+        for item in self.v1("GET", "/recipients", key)[1]["data"]:
+            self.assert_ios("recipient", item)
+        page = self.v1("GET", "/aliases", key)[1]
+        self.assert_ios("meta", page["meta"])
+        for item in page["data"]:
+            self.assert_ios("alias", item)
+            for each in item["recipients"]:
+                self.assert_ios("recipient", each)
+        self.assertTrue(page["data"][0]["last_forwarded"])
+        created = self.v1("POST", "/aliases", key, {"domain": DOMAIN, "description": "x"})[1]["data"]
+        self.assert_ios("alias", created)
+        self.assert_ios("alias", self.v1("GET", "/aliases/bold-fox-10", key)[1]["data"])
 
     def extension_list(self, key, **params):
         query = {"filter[deleted]": "without", "filter[active]": "", "filter[pinned]": "", "filter[search]": "", "sort": "-created_at",

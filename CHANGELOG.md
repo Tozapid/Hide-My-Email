@@ -4,7 +4,8 @@
 
 ### Fixed
 
-- The addy.io apps for Android and iOS could not sign in: they ask for `GET /api/v1/account-details`, which answered "Not Found". The API now has `/account-details`, `/api-token-details` and `/app-version` (it reports addy.io 1.7.2, the version the current apps need), and answers the lists of things this relay does not have (`/usernames`, `/domains`, `/rules`, `/failed-deliveries`, `/blocklist`, `/account-notifications`) with empty lists.
+- The addy.io apps for Android and iOS could not sign in: they ask for `GET /api/v1/account-details`, which answered "Not Found". The API now has `/account-details`, `/api-token-details` and `/app-version` (it reports addy.io 1.7.3, the oldest server the current apps accept), and answers the lists of things this relay does not have (`/usernames`, `/domains`, `/rules`, `/failed-deliveries`, `/blocklist`, `/account-notifications`) with empty lists.
+- The iOS app decodes strictly and failed on null where it wants a value (`DecodingError.valueNotFound … data.default_username_id`). Fields it needs are always there now: `default_username_id`, an alias's `user_id` and `attached_recipients_only`, every field of a recipient, `meta.links` and `meta.path` of a page. `GET /api/v1/recipients/<address>` answers the default recipient the app loads at start. Times come as addy.io writes them, `YYYY-MM-DD HH:MM:SS`.
 
 ## v1.6.1
 

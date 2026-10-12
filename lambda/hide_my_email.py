@@ -103,9 +103,10 @@ REPLY_PREFIX = "r-"
 # they still work, the extension just cannot take them.
 TOKEN_PREFIX = "hme"
 # The addy.io server version /api/v1/app-version reports. The addy.io apps
-# refuse a self-hosted server older than they need (app 6.5 wants 1.7.2);
-# raise it when a newer app asks for more and still works with this API.
-ADDY_VERSION = "1.7.2"
+# refuse a self-hosted server older than they need (MINIMUMVERSIONCODE in
+# AddyIo.swift and AddyIo.kt: 1.7.3); raise it when a newer app asks for more
+# and still works with this API. 9999 would mean app.addy.io itself.
+ADDY_VERSION = "1.7.3"
 TOKEN_ALPHABET = string.ascii_letters + string.digits
 # The addy.io API is called from Bitwarden's web vault and extension, other
 # origins. It takes a key in a header, never a cookie, so any origin may call.
@@ -744,7 +745,9 @@ def token_owner(event):
 # /account-details and /api-token-details, check /app-version against the
 # server version they need, and open lists this relay does not have
 # (usernames, domains, rules, failed deliveries, blocklist, notifications),
-# which come back empty. There are no labels here: the list is empty and label
+# which come back empty. The iOS app decodes strictly: fields it declares
+# as strings or booleans must be there and must not be null, times are
+# "YYYY-MM-DD HH:MM:SS" and a page has meta.links and meta.path. There are no labels here: the list is empty and label
 # changes are accepted and dropped. Every random format (random_words,
 # random_characters, uuid) gives the usual random name. Errors are
 # {"message": ...} as in addy.io; validation errors also carry "errors".
@@ -780,7 +783,7 @@ def public_route(method, parts, event, key=None):
     if parts == ["account-details"] and method == "GET":
         return response(200, {"data": addy_account(key or {})})
     if parts == ["api-token-details"] and method == "GET":
-        return response(200, {"name": (key or {}).get("name") or "", "created_at": addy_time((key or {}).get("created_at")), "expires_at": None})
+        return response(200, {"name": (key or {}).get("name") or "", "created_at": addy_time((key or {}).get("created_at")) or "", "expires_at": None})
     if parts == ["app-version"] and method == "GET":
         major, minor, patch = (int(part) for part in ADDY_VERSION.split("."))
         return response(200, {"version": ADDY_VERSION, "major": major, "minor": minor, "patch": patch})
@@ -795,7 +798,16 @@ def public_route(method, parts, event, key=None):
         })
     if parts == ["recipients"] and method == "GET":
         addresses = sorted({forward_to()} | {destination(item) for item in all_aliases()})
-        return response(200, {"data": [{"id": address, "email": address} for address in addresses]})
+        items = all_aliases()
+        since = min((item.get("created_at") or "" for item in items), default="")
+        addresses = sorted({forward_to()} | {destination(item) for item in items})
+        return response(200, {"data": [addy_recipient(address, since) for address in addresses]})
+    if len(parts) == 2 and parts[0] == "recipients" and method == "GET":
+        items = all_aliases()
+        address = parts[1].strip().lower()
+        if address not in {forward_to()} | {destination(item) for item in items}:
+            raise ApiError(404, "not_found")
+        return response(200, {"data": addy_recipient(address, min((item.get("created_at") or "" for item in items), default=""))})
     if parts == ["labels"] and method == "GET":
         return response(200, {"data": []})
     if parts == ["aliases"] and method == "GET":
@@ -886,6 +898,7 @@ def addy_list(params):
             "next": f"{base}?page[number]={number + 1}" if number < last else None,
         },
         "meta": {"current_page": number, "last_page": last, "per_page": size, "total": total,
+                 "path": base, "links": [],
                  "from": (number - 1) * size + 1 if page else None, "to": (number - 1) * size + len(page) if page else None},
     }
 
@@ -916,7 +929,7 @@ def addy_account(key):
         "bandwidth": 0,
         "username_count": 0,
         "username_limit": 0,
-        "default_username_id": None,
+        "default_username_id": "",
         "default_recipient_id": forward_to(),
         "default_alias_domain": domain_name(),
         "default_alias_format": "random_words",
@@ -943,8 +956,8 @@ def addy_account(key):
         "total_inactive_aliases": len(items) - active,
         "total_pinned_aliases": sum(1 for item in items if item.get("pinned")),
         "total_deleted_aliases": 0,
-        "created_at": addy_time(key.get("created_at")),
-        "updated_at": addy_time(key.get("last_used_at") or key.get("created_at")),
+        "created_at": addy_time(key.get("created_at")) or "",
+        "updated_at": addy_time(key.get("last_used_at") or key.get("created_at")) or "",
     }
 
 
@@ -956,7 +969,7 @@ def addy_time(value):
 def addy_alias(item):
     return {
         "id": item["sk"],
-        "user_id": None,
+        "user_id": "",
         "local_part": item["sk"],
         "extension": None,
         "domain": alias_domain(item),
@@ -965,19 +978,45 @@ def addy_alias(item):
         "pinned": bool(item.get("pinned")),
         "description": item.get("comment") or None,
         "from_name": item.get("sender_name") or None,
-        "recipients": [{"id": destination(item), "email": destination(item)}],
+        "attached_recipients_only": False,
+        "recipients": [addy_recipient(destination(item), item.get("created_at"))],
         "labels": [],
         "emails_forwarded": int(item.get("forwarded") or 0),
         "emails_blocked": 0,
         "emails_replied": 0,
         "emails_sent": 0,
-        "last_forwarded": item.get("last_at") or None,
+        "last_forwarded": addy_time(item.get("last_at")),
         "last_blocked": None,
         "last_replied": None,
         "last_sent": None,
-        "created_at": item.get("created_at") or "",
-        "updated_at": item.get("updated_at") or "",
+        "created_at": addy_time(item.get("created_at")) or "",
+        "updated_at": addy_time(item.get("updated_at") or item.get("created_at")) or "",
         "deleted_at": None,
+    }
+
+
+# A forwarding address as an addy.io recipient: verified (SES sends to it),
+# no encryption. Its times are those of the oldest alias that uses it, or of
+# the alias asked about.
+def addy_recipient(address, since=None):
+    when = addy_time(since) or ""
+    return {
+        "id": address,
+        "user_id": "",
+        "email": address,
+        "description": None,
+        "can_reply_send": True,
+        "should_encrypt": False,
+        "inline_encryption": False,
+        "protected_headers": False,
+        "remove_pgp_keys": False,
+        "remove_pgp_signatures": False,
+        "fingerprint": None,
+        "active": True,
+        "email_verified_at": when or None,
+        "aliases_count": None,
+        "created_at": when,
+        "updated_at": when,
     }
 
 
