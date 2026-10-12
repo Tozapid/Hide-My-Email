@@ -1,6 +1,13 @@
 # Changelog
 
-## v1.6.2
+## v1.7.0
+
+### Added
+
+- More of the addy.io API, for its apps: an alias's sender name (`PATCH /aliases/<name>` with `from_name`), its forwarding address (`POST /alias-recipients`), bulk actions (`POST /aliases/{get,activate,deactivate,pin,unpin,delete,forget,recipients,restore,labels}/bulk`) and `DELETE /aliases/<name>/forget`.
+- Recipients through the API: add one (`POST /recipients`; SES mails a confirmation link while the account is in the sandbox), give it a description (`PATCH /recipients/<address>`), send the link again (`POST /recipients/email/resend`) and delete one no alias uses (`DELETE /recipients/<address>`). Added recipients are kept in the table (`RECIPIENT`) and offered as forwarding addresses; the demo caps them with `max_relays`.
+- `GET /domains` and `GET /domains/<domain>`: the alias domains, read-only.
+- What this relay does not have (recipient encryption and permissions, own domains and usernames, rules, blocklist, labels, restoring) answers 422 with a message the apps show, not 404. Only the forwarding address of an alias may reply, so its recipients are always "attached only".
 
 ### Fixed
 
