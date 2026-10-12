@@ -2,6 +2,10 @@
 
 All notable changes of the project. Newest first.
 
+## v1.6.1 — versions without a date
+
+- A `CHANGELOG.md` entry no longer needs a date: `## v1.4.1`, `## v1.4.1 — 2026-10-12` and `## v1.4.1 — a title` all work. GitHub dates the release itself.
+
 ## v1.6.0 — 2026-10-12 — versions and releases
 
 - Settings → Version: the version of the site and the releases of the demo repository that came after it, with their notes. The API reads them from the Atom feed of the GitHub releases (`GET /api/version`) and keeps them an hour.
