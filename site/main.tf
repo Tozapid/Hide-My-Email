@@ -52,7 +52,7 @@ resource "aws_cloudfront_distribution" "this" {
   #checkov:skip=CKV_AWS_68:A WAFv2 web ACL alone would cost more than the rest of the stack.
   #checkov:skip=CKV2_AWS_47:No WAFv2 WebACL is attached.
   #checkov:skip=CKV_AWS_310:Two S3 origins and one API origin, each with its own path. A failover group is not needed.
-  #checkov:skip=CKV_AWS_86:Legacy CloudFront access logs need a bucket ACL. API Gateway and Lambda log to CloudWatch instead.
+  #checkov:skip=CKV_AWS_86:The access logs are standard logging v2 (access-logs.tf); the legacy logging block needs a bucket ACL.
   #checkov:skip=CKV_AWS_305:Geo restriction is not required for this private page.
   #checkov:skip=CKV_AWS_174:Without a domain the default CloudFront certificate allows no minimum TLS version; with one it is TLSv1.2_2021.
   provider            = aws.global
