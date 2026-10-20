@@ -1,14 +1,16 @@
 # Mail, only when there are domains. Each domain gets an SES identity: SES
 # signs the forwarded mail and the replies with DKIM for it, and a custom
 # MAIL FROM keeps SPF aligned too. Its DNS records go into its Route 53 zone
-# when it names one; otherwise they are listed in the output dns_records.
+# when it names one; otherwise they are listed in the output dns_records. A
+# domain for mail only (mail_only) has its identity, DKIM, MAIL FROM and
+# DMARC from another stack and gets only its MX record here.
 
 locals {
   zoned_domains = { for domain in var.domains : domain.name => domain.route53_zone if domain.route53_zone != null }
 }
 
 resource "aws_sesv2_email_identity" "domain" {
-  for_each = toset(local.mail ? local.alias_domains : [])
+  for_each = toset(local.mail ? keys(local.sites) : [])
 
   email_identity = each.value
 }
@@ -26,8 +28,8 @@ resource "aws_sesv2_email_identity_mail_from_attributes" "domain" {
 locals {
   mail_records = {
     for name in(local.mail ? local.alias_domains : []) : name => concat(
-      [
-        { key = "mx", type = "MX", name = name, value = "10 inbound-smtp.${var.region}.amazonaws.com" },
+      [{ key = "mx", type = "MX", name = name, value = "10 inbound-smtp.${var.region}.amazonaws.com" }],
+      contains(local.mail_only_domains, name) ? [] : [
         { key = "mail-from-mx", type = "MX", name = "bounce.${name}", value = "10 feedback-smtp.${var.region}.amazonses.com" },
         { key = "mail-from-spf", type = "TXT", name = "bounce.${name}", value = "v=spf1 include:amazonses.com ~all" },
         # BIMI shows a logo only for DMARC quarantine or reject on all mail, so
@@ -37,7 +39,7 @@ locals {
       ],
       # SES always gives three DKIM tokens; counting them keeps the keys known
       # before the identity exists.
-      [
+      contains(local.mail_only_domains, name) ? [] : [
         for index in range(3) : {
           key   = "dkim-${index}"
           type  = "CNAME"

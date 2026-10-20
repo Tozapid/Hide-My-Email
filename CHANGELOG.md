@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.8.0
+
+### Added
+
+- Domains for mail only: a domain of `domains` with `mail_only = true` gets only its MX record, for a domain whose SES identity with DKIM, MAIL FROM and DMARC another stack already makes (an apex domain with a site of its own, say). It has no page, certificate or identity here; aliases on it are made on the page like on the others. The first domain keeps the page and cannot be mail only.
+- CloudFront access logs, optional: with `access_logs_bucket` set, the standard logs (v2) of each distribution of the page go to that bucket under `cloudfront/<name>/` (the demo) or `cloudfront/<name>-<domain with dashes>/` as JSON lines, for an overview of the account such as [account-serverless-aws](https://github.com/Tozapid/account-serverless-aws) to read. The CI passes the repository variable `ACCESS_LOGS_BUCKET`; unset, there are none.
+
 ## v1.7.1
 
 ### Fixed

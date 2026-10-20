@@ -27,9 +27,11 @@ locals {
   mail          = length(var.domains) > 0
   alias_domains = local.mail ? [for domain in var.domains : domain.name] : [var.demo_domain]
 
-  # One distribution of the page per domain; without domains, one on the
-  # default *.cloudfront.net address.
-  sites = local.mail ? { for domain in var.domains : domain.name => domain } : { default = null }
+  # One distribution of the page per domain but those for mail only; without
+  # domains, one on the default *.cloudfront.net address.
+  sites = local.mail ? { for domain in var.domains : domain.name => domain if !domain.mail_only } : { default = null }
+  # The domains for mail only: their SES identity is another stack's.
+  mail_only_domains = [for domain in var.domains : domain.name if domain.mail_only]
 
   # Route 53 zones of the domains that have one.
   zones = toset([for domain in var.domains : domain.route53_zone if domain.route53_zone != null])

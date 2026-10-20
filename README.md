@@ -225,7 +225,7 @@ Steps to production:
    ```
 
    Its permissions: everything named with the `name` prefix (`s3:*` on `arn:aws:s3:::hme-demo-*`, the table, functions and Lambda layers, roles with `iam:PassRole`, log groups, SSM parameters under `/hme-demo/`, the EventBridge rule), API Gateway, Cognito and CloudFront (their ids are generated), log delivery for API access logs, and the state objects under the state key prefix. The demo needs no SES, ACM or Route 53; production adds them.
-3. In the GitHub repository: the environment `demo`, and the variables `AWS_ROLE_ARN` (the role) and `TF_STATE_BUCKET` (the state bucket). There are no secrets.
+3. In the GitHub repository: the environment `demo`, and the variables `AWS_ROLE_ARN` (the role) and `TF_STATE_BUCKET` (the state bucket). There are no secrets. Optionally `ACCESS_LOGS_BUCKET`: the CI passes it as `access_logs_bucket`, and the CloudFront access logs of the site go there (see [Access logs](#access-logs)); the role then also needs log delivery in `us-east-1` (`logs:PutDeliverySource`, `PutDeliveryDestination`, `CreateDelivery` and their `Get`/`Delete`/`Describe` on names with the prefix) and `s3:GetBucketPolicy` on that bucket.
 4. Python 3 with pip (or the venv module) and access to PyPI where Terraform plans: `lambda/build_layer.py` fetches the `cryptography` wheels of `lambda/requirements.txt` for Linux arm64 into `.build/layer`. The same versions give the same zip, so the layer changes only with them. Not needed with `pgp_enabled = false`.
 
 ### GitHub Actions
@@ -336,6 +336,12 @@ Nothing runs between messages and page views, and most services stay within the 
 | *Optional:* VMC/CMC for BIMI in Gmail | — | a few hundred dollars a year | from the certificate authority |
 
 \* One domain with its DNS in Route 53, 500 incoming messages and 100 replies a month, a handful of page visits a day. A domain whose DNS is elsewhere (Cloudflare, …) costs nothing in Route 53. A WAF web ACL is left out on purpose: it alone would cost about $5–6 a month. Prices are approximate and change over time; check the AWS pricing pages for your region.
+
+## Access logs
+
+Off by default. With `access_logs_bucket` set (the repository variable `ACCESS_LOGS_BUCKET` in CI), `access-logs.tf` turns on the standard logs (v2) of CloudFront: CloudWatch delivers a gzipped JSON line per request from `us-east-1` to `cloudfront/<name>/<yyyy>/<MM>/<dd>/` of that bucket (the demo; with domains, `<name>-<domain with dashes>` for each one's distribution), at no charge for the delivery to S3. A line holds the date and time, the address and country of the viewer, the method, path, status, bytes, time taken, referrer, user agent, cache result and host.
+
+The bucket is yours, in the same account: its policy has to let `delivery.logs.amazonaws.com` put objects under `cloudfront/` (and read the bucket ACL), conditioned on the account. [account-serverless-aws](https://github.com/Tozapid/account-serverless-aws) reads such a bucket and shows the traffic of each site.
 
 ## Access and security
 

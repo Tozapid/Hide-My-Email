@@ -42,3 +42,15 @@ variable "web_key_directory" {
   default     = true
   description = "Pass /.well-known/openpgpkey/* to the API, with the domain in X-Hide-My-Email-Site: the Web Key Directory of the OpenPGP keys of the aliases."
 }
+
+variable "access_logs_bucket" {
+  type        = string
+  default     = null
+  description = "Bucket that the standard logs (v2) of the distribution go to, under cloudfront/<access_logs_name>/. Null: no access logs."
+}
+
+variable "access_logs_name" {
+  type        = string
+  default     = null
+  description = "Name of the distribution in the access logs: the folder under cloudfront/ and the names of the log delivery source and destination."
+}

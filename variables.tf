@@ -20,9 +20,15 @@ variable "domains" {
   type = list(object({
     name         = string
     route53_zone = optional(string)
+    mail_only    = optional(bool, false)
   }))
   default     = []
-  description = "Alias domains; the first is the default. Each gets mail (SES receiving and sending) and the page with a certificate of its own. With route53_zone the stack writes the DNS records into that zone; without it they are in the output dns_records. Empty: no mail, the page on the CloudFront address (the demo)."
+  description = "Alias domains; the first is the default. Each gets mail (SES receiving and sending) and the page with a certificate of its own. With route53_zone the stack writes the DNS records into that zone; without it they are in the output dns_records. mail_only: a domain for mail only, whose SES identity (DKIM, MAIL FROM, DMARC) another stack makes; it gets only its MX record, no page and no identity of its own. Empty: no mail, the page on the CloudFront address (the demo)."
+
+  validation {
+    condition     = length(var.domains) == 0 || !var.domains[0].mail_only
+    error_message = "The first domain, the default, has the page: it cannot be mail_only."
+  }
 }
 
 variable "demo_domain" {
@@ -101,6 +107,12 @@ variable "pgp_enabled" {
   type        = bool
   default     = true
   description = "OpenPGP: the signatures of what the aliases send, the key on the page, the switch of the signatures in the settings and the Web Key Directory with its route and CloudFront path, and the cryptography layer. Off, there is none of it. The secret the keys come from stays (pgp.tf), so turning it back on gives every alias the same key."
+}
+
+variable "access_logs_bucket" {
+  type        = string
+  default     = ""
+  description = "Bucket that the standard logs (v2) of the distributions of the page go to, under cloudfront/<name>/ (the demo) or cloudfront/<name>-<domain with dashes>/, such as the logs_bucket of an overview of the account (Tozapid/account-serverless-aws). Its policy has to let delivery.logs.amazonaws.com write there. Empty: no access logs."
 }
 
 variable "tags" {

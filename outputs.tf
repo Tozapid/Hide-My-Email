@@ -37,8 +37,8 @@ output "dns_records" {
   value = {
     for domain in var.domains : domain.name => concat(
       [for record in local.mail_records[domain.name] : { type = record.type, name = record.name, value = record.value }],
-      module.site[domain.name].certificate_validation_records,
-      [{ type = "CNAME", name = domain.name, value = module.site[domain.name].distribution_domain_name }],
+      domain.mail_only ? [] : module.site[domain.name].certificate_validation_records,
+      domain.mail_only ? [] : [{ type = "CNAME", name = domain.name, value = module.site[domain.name].distribution_domain_name }],
     ) if domain.route53_zone == null
   }
 }

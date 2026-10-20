@@ -16,6 +16,9 @@ module "site" {
 
   web_key_directory = var.pgp_enabled
 
+  access_logs_bucket = var.access_logs_bucket != "" ? var.access_logs_bucket : null
+  access_logs_name   = each.value == null ? local.name : "${local.name}-${replace(each.key, ".", "-")}"
+
   origins = {
     web_bucket_domain  = aws_s3_bucket.web.bucket_regional_domain_name
     web_oac_id         = aws_cloudfront_origin_access_control.web.id
