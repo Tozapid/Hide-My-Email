@@ -2,4 +2,4 @@
 # their own dependencies, so every package is pinned here).
 cryptography==50.0.2
 cffi==2.1.1
-pycparser==3.11
+pycparser==3.12
