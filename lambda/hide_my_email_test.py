@@ -758,6 +758,67 @@ class ApiTest(Base):
         for cookie in result["cookies"]:
             self.assertRegex(cookie, r"^CloudFront-[A-Za-z-]+=; Path=/attachments; .*Max-Age=0$")
 
+    # A message as SES stores it: its Authentication-Results above the sender's
+    # headers, among which a sender may put one of its own.
+    def deliver_spam(self, results):
+        alias = self.alias()
+        raw = raw_message("Shop <news@shop.test>", alias, subject="Cheap pills", headers={"Authentication-Results": "amazonses.com; dkim=pass header.i=@forged.test"})
+        if results:
+            raw = b"Authentication-Results: " + results.encode() + b"\n" + raw
+        raw = raw.replace(b"\n", b"\r\n")
+        self.deliver(raw, [alias], "bounce@mail.shop.test")
+        return self.call("GET", "/api/messages")[1]["items"][0]["id"], raw
+
+    def test_report_a_forwarded_message_as_spam(self):
+        message_id, raw = self.deliver_spam(
+            "amazonses.com;\n spf=pass (spfCheck: domain of mail.shop.test designates 192.0.2.1 as permitted sender) client-ip=192.0.2.1;"
+            " envelope-from=bounce@Mail.Shop.test; helo=mx.shop.test;\n dkim=pass header.i=@shop.test;\n dkim=pass header.i=@" + DOMAIN + ";\n dmarc=pass header.from=shop.test;")
+        status, reported = self.call("POST", f"/api/messages/{message_id}/spam")
+        self.assertEqual(status, 200)
+        self.assertEqual(reported["reported_to"], ["abuse@shop.test", "abuse@mail.shop.test"], "DKIM first, never an alias domain")
+        self.assertTrue(reported["reported_at"])
+        source, to, report = self.ses.sent[-1]
+        self.assertEqual((source, to), (f"abuse@{DOMAIN}", ["abuse@shop.test", "abuse@mail.shop.test"]))
+        self.assertEqual(report.get_content_type(), "multipart/report")
+        self.assertEqual(report.get_param("report-type"), "feedback-report")
+        self.assertEqual(str(report["Subject"]), "Abuse report: Cheap pills")
+        text, feedback, original = report.iter_parts()
+        self.assertIn(f"quiet-river-42@{DOMAIN}", text.get_content())
+        self.assertEqual(feedback.get_content_type(), "message/feedback-report")
+        fields = self.ses.raw[-1].split(b"message/feedback-report\r\n\r\n")[1].split(b"\r\n\r\n")[0].decode()
+        for field in ("Feedback-Type: abuse", "Version: 1", f"Original-Rcpt-To: <quiet-river-42@{DOMAIN}>", "Original-Mail-From: <bounce@Mail.Shop.test>",
+                      "Source-IP: 192.0.2.1", "Reported-Domain: shop.test", "Reported-Domain: mail.shop.test"):
+            self.assertIn(field, fields)
+        self.assertEqual(original.get_content_type(), "message/rfc822")
+        self.assertIn(raw.rstrip(b"\r\n"), self.ses.raw[-1], "the message byte for byte")
+        self.assertNotIn(OWNER.encode(), self.ses.raw[-1], "the forwarding address stays hidden")
+        listed = self.call("GET", "/api/messages")[1]["items"][0]
+        self.assertEqual(listed["reported_to"], reported["reported_to"])
+
+    def test_a_spam_report_goes_only_to_domains_ses_checked(self):
+        for results in ("mx.forged.test; dkim=pass header.i=@shop.test", "amazonses.com; spf=fail client-ip=192.0.2.1; envelope-from=x@shop.test; dkim=fail header.i=@shop.test"):
+            self.setUp()
+            message_id, _ = self.deliver_spam(results)
+            sent = len(self.ses.sent)
+            status, reported = self.call("POST", f"/api/messages/{message_id}/spam")
+            self.assertEqual((status, reported["reported_to"]), (200, []), results)
+            self.assertTrue(reported["reported_at"], "marked all the same")
+            self.assertEqual(len(self.ses.sent), sent, "nothing goes out")
+
+    def test_only_a_forwarded_message_is_reported(self):
+        self.alias()
+        sent = self.call("POST", "/api/messages", {"alias": "quiet-river-42", "to": "bob@shop.test", "subject": "Hi", "text": "Hi"})[1]
+        self.assertEqual(self.call("POST", f"/api/messages/{sent['id']}/spam"), (400, {"error": app.ERRORS["not_incoming"], "code": "not_incoming"}))
+        self.assertEqual(self.call("POST", "/api/messages/nope/spam")[0], 404)
+
+    def test_without_mail_a_message_is_only_marked(self):
+        message_id, _ = self.deliver_spam("amazonses.com; dkim=pass header.i=@shop.test")
+        sent = len(self.ses.sent)
+        os.environ["MAIL_ENABLED"] = "false"
+        self.addCleanup(os.environ.pop, "MAIL_ENABLED")
+        status, reported = self.call("POST", f"/api/messages/{message_id}/spam")
+        self.assertEqual((status, reported["reported_to"], len(self.ses.sent)), (200, [], sent))
+
     def test_delete_one_message_or_the_log_of_an_alias(self):
         self.deliver_some()
         items = self.call("GET", "/api/messages")[1]["items"]

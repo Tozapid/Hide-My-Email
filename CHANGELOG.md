@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.9.0
+
+### Added
+
+- Spam reports: a forwarded message in the log has a "Report spam" button (`POST /api/messages/<id>/spam`). The message goes back, as it arrived, in an abuse report (ARF, RFC 5965) from `abuse@<alias domain>` to `abuse@` of each sender's domain SES authenticated: the DKIM signer and, when SPF passed, the envelope sender, as SES's own `Authentication-Results` names them. A message without such a domain, and every message in the demo, is only marked. The log keeps when and to whom it was reported (`reported_at`, `reported_to`).
+
 ## v1.8.0
 
 ### Added

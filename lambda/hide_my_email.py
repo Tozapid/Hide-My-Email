@@ -55,7 +55,7 @@ list, create, change and delete aliases, ask SES to verify a forwarding
 address while the account is in the SES sandbox, find the conversation behind
 a relay address, list, add and remove the correspondents of an alias, send a
 new message from an alias, read and delete the message log, manage API keys,
-turn the PGP signatures on and off.
+turn the PGP signatures on and off, report a forwarded message as spam.
 
 /api/v1/aliases is the part of the addy.io API that the username generator
 of Bitwarden and the addy.io browser extension use. API Gateway lets it
@@ -68,7 +68,8 @@ pgp_created);
 pk = TOKEN, sk = SHA-256 of an API key (id, name, created_by, created_at,
 last_used_at); pk = REPLY, sk = code (alias, sender, name); pk = MSG, sk = id,
 which sorts by time (direction, alias, alias_domain, code, relay, from_*,
-to_*, delivered_to, subject, at, size, spam, attachments); pk = SETTING,
+to_*, delivered_to, subject, at, size, spam, attachments, reported_at,
+reported_to); pk = SETTING,
 sk = pgp (signing, updated_at); pk = RECIPIENT, sk = a forwarding address
 added through the addy.io API (created_at, description, updated_at).
 """
@@ -135,6 +136,7 @@ SHA1_DIGEST_INFO = bytes.fromhex("3021300906052b0e03021a05000414")
 RESERVED = {"noreply", "postmaster", "abuse", "hostmaster", "webmaster", "bounce", "mailer-daemon"}
 ALIAS_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,38}[a-z0-9])?$")
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,}$")
+DOMAIN_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 # Headers that name an address SES would have to send for, or that speak of
 # the checks of the original message (its signature, SPF, ARC, the receipt by
 # SES). Left in a forwarded message they contradict the new From and its DKIM,
@@ -217,6 +219,7 @@ ERRORS = {
     "bad_subject": "Subject: text on one line, up to 300 characters",
     "bad_text": "The message must be text, up to 100,000 characters",
     "send_rejected": "SES did not send the message; while the account is in the SES sandbox the recipient has to be verified",
+    "not_incoming": "Only a forwarded message can be reported as spam",
 }
 
 
@@ -669,6 +672,8 @@ def api_route(method, parts, event):
             raise ApiError(404, "message_not_found")
         delete_messages([item])
         return response(200, {"deleted": 1})
+    if len(parts) == 3 and parts[0] == "messages" and parts[2] == "spam" and method == "POST":
+        return response(200, report_spam(parts[1]))
     # Sign-out: the attachment cookie goes too.
     if parts == ["session"] and method == "DELETE":
         return {**response(200, {"ok": True}), "cookies": attachment_cookies(expired=True)}
@@ -1635,7 +1640,122 @@ def public_message(item):
         "at": item.get("at") or "",
         "size": int(item.get("size") or 0),
         "spam": bool(item.get("spam")),
+        "reported_at": item.get("reported_at") or "",
+        "reported_to": list(item.get("reported_to") or []),
     }
+
+
+# Spam reports ------------------------------------------------------------------
+#
+# The page marks a forwarded message as spam, and the message goes back as an
+# abuse report (ARF, RFC 5965) to abuse@ of each domain SES authenticated for
+# it: the DKIM signer and the SPF envelope sender, as the Authentication-Results
+# of SES in the received copy name them. Any other header could name anybody's
+# domain, so a message without such a domain is only marked. The report comes
+# from abuse@ of the alias domain and carries the message as it arrived, which
+# shows the alias but never the forwarding address. Without mail (the demo)
+# the message is only marked.
+def report_spam(message_id):
+    item = table().get_item(Key={"pk": "MSG", "sk": message_id}).get("Item")
+    if not item:
+        raise ApiError(404, "message_not_found")
+    if (item.get("direction") or "in") != "in":
+        raise ApiError(400, "not_incoming")
+    recipients = []
+    if mail_enabled():
+        try:
+            raw = s3().get_object(Bucket=env("MAIL_BUCKET"), Key=env("MESSAGES_PREFIX") + message_id)["Body"].read()
+        except Exception as exc:
+            if error_code(exc) != "NoSuchKey":
+                raise
+            raise ApiError(404, "message_not_found") from exc
+        results = ses_results(parse(raw))
+        recipients = [f"abuse@{domain}" for domain in results["domains"]]
+        if recipients:
+            source = f"abuse@{item.get('alias_domain') or domain_name()}"
+            try:
+                send(source, recipients, abuse_report(raw, item, source, recipients, results))
+            except Exception as exc:
+                if error_code(exc) in ("MessageRejected", "AccountSendingPausedException", "MailFromDomainNotVerifiedException"):
+                    raise ApiError(400, "send_rejected") from exc
+                raise
+    reported = table().update_item(
+        Key={"pk": "MSG", "sk": message_id},
+        UpdateExpression="SET #reported_at = :at, #reported_to = :to",
+        ExpressionAttributeNames={"#reported_at": "reported_at", "#reported_to": "reported_to"},
+        ExpressionAttributeValues={":at": now_iso(), ":to": recipients},
+        ReturnValues="ALL_NEW",
+    )["Attributes"]
+    return public_message(reported)
+
+
+# What SES found for a received message, from its own Authentication-Results:
+# the first one, which SES puts above everything the sender wrote. domains are
+# those that passed DKIM, then the envelope sender's when SPF passed, without
+# the alias domains.
+def ses_results(message):
+    found = {"domains": [], "mail_from": "", "source_ip": ""}
+    values = message.get_all("Authentication-Results") or []
+    if not values:
+        return found
+    server, _, text = " ".join(str(values[0]).split()).partition(";")
+    if server.strip().lower() != "amazonses.com":
+        return found
+    domains = [value.rpartition("@")[2] for value in re.findall(r"\bdkim=pass\s+header\.[id]=([^\s;]+)", text, re.I)]
+    mail_from = re.search(r"\b(?:envelope-from|smtp\.mailfrom)=([^\s;]+)", text, re.I)
+    if mail_from:
+        found["mail_from"] = mail_from.group(1)
+        if re.search(r"\bspf=pass\b", text, re.I):
+            domains.append(mail_from.group(1).rpartition("@")[2])
+    source_ip = re.search(r"\bclient-ip=([0-9a-f.:]+)", text, re.I)
+    if source_ip:
+        found["source_ip"] = source_ip.group(1)
+    for domain in domains:
+        domain = domain.strip().strip(".").lower()
+        if DOMAIN_RE.match(domain) and domain not in alias_domains() and domain not in found["domains"]:
+            found["domains"].append(domain)
+    return found
+
+
+# The report: a text for people, the machine-readable part and the message
+# byte for byte, which keeps its DKIM signature verifiable.
+def abuse_report(raw, item, source, recipients, results):
+    boundary = "report-" + secrets.token_hex(12)
+    alias = logged_alias_address(item)
+    arrived = datetime.fromisoformat((item.get("at") or now_iso()).replace("Z", "+00:00"))
+    feedback = [
+        ("Feedback-Type", "abuse"),
+        ("User-Agent", "Hide-My-Email"),
+        ("Version", "1"),
+        ("Original-Rcpt-To", f"<{alias}>"),
+        ("Arrival-Date", email.utils.format_datetime(arrived)),
+    ]
+    if results["mail_from"]:
+        feedback.append(("Original-Mail-From", f"<{results['mail_from']}>"))
+    if results["source_ip"]:
+        feedback.append(("Source-IP", results["source_ip"]))
+    feedback += [("Reported-Domain", domain) for domain in results["domains"]]
+    fold = email.policy.SMTP.fold
+    head = "".join([
+        fold("From", source),
+        fold("To", ", ".join(recipients)),
+        fold("Subject", "Abuse report: " + (item.get("subject") or "(no subject)")),
+        fold("Date", email.utils.formatdate(usegmt=True)),
+        fold("Message-ID", email.utils.make_msgid(domain=source.split("@")[1])),
+        "MIME-Version: 1.0\r\n",
+        f'Content-Type: multipart/report; report-type=feedback-report; boundary="{boundary}"\r\n',
+    ])
+    text = (
+        f"The recipient of this message at {alias} reported it as spam.\r\n"
+        f"It arrived on {email.utils.format_datetime(arrived)} and is attached as received.\r\n"
+    )
+    parts = [
+        "Content-Type: text/plain; charset=utf-8\r\n\r\n" + text,
+        "Content-Type: message/feedback-report\r\n\r\n" + "".join(f"{name}: {value}\r\n" for name, value in feedback),
+    ]
+    body = b"".join(f"--{boundary}\r\n{part}\r\n".encode() for part in parts)
+    body += f"--{boundary}\r\nContent-Type: message/rfc822\r\n\r\n".encode() + raw.rstrip(b"\r\n") + b"\r\n"
+    return head.encode() + b"\r\n" + body + f"--{boundary}--\r\n".encode()
 
 
 # One logged message with its text: the plain part, or the HTML part as text.

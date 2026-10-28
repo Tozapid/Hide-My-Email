@@ -173,6 +173,12 @@ window.HIDE_MY_EMAIL_I18N = {
       "message.delete": "Delete from log",
       "message.deleteConfirm": "Delete the message from the log, together with its stored copy?",
       "message.deleted": "Message deleted",
+      "message.report": "Report spam",
+      "message.reportConfirm": "Report the message as spam? It goes, as received, to the abuse address of the sender's domains that SES checked.",
+      "message.reported": "Reported as spam to {to}",
+      "message.reportedNowhere": "Marked as spam; no sender's domain was checked by SES, so no report went out",
+      "message.reportNote": "Reported as spam on {date} to {to}.",
+      "message.reportNoteNowhere": "Marked as spam on {date}; no sender's domain was checked by SES, so no report went out.",
 
       "account.title": "Settings",
       "language.title": "Language",
@@ -257,6 +263,7 @@ window.HIDE_MY_EMAIL_I18N = {
       "api.bad_subject": "Subject: text on one line, up to 300 characters",
       "api.bad_text": "The message must be text, up to 100,000 characters",
       "api.send_rejected": "SES did not send the message; while the account is in the SES sandbox the recipient has to be verified",
+      "api.not_incoming": "Only a forwarded message can be reported as spam",
     },
 
     ru: {
@@ -419,6 +426,12 @@ window.HIDE_MY_EMAIL_I18N = {
       "message.delete": "Удалить из лога",
       "message.deleteConfirm": "Удалить письмо из лога вместе с сохранённой копией?",
       "message.deleted": "Письмо удалено",
+      "message.report": "Это спам",
+      "message.reportConfirm": "Пожаловаться на письмо как на спам? Оно в исходном виде уйдёт на abuse-адрес доменов отправителя, проверенных SES.",
+      "message.reported": "Жалоба на спам отправлена на {to}",
+      "message.reportedNowhere": "Помечено как спам; SES не подтвердил ни один домен отправителя, поэтому жалоба не отправлена",
+      "message.reportNote": "{date} отправлена жалоба на спам на {to}.",
+      "message.reportNoteNowhere": "{date} помечено как спам; SES не подтвердил ни один домен отправителя, поэтому жалоба не отправлена.",
 
       "account.title": "Настройки",
       "language.title": "Язык",
@@ -503,6 +516,7 @@ window.HIDE_MY_EMAIL_I18N = {
       "api.bad_subject": "Тема: одна строка, до 300 символов",
       "api.bad_text": "Текст письма — до 100 000 символов",
       "api.send_rejected": "SES не отправил письмо; пока аккаунт в песочнице SES, адрес получателя должен быть подтверждён",
+      "api.not_incoming": "Пожаловаться на спам можно только на пересланное письмо",
     },
 
     fr: {
@@ -665,6 +679,12 @@ window.HIDE_MY_EMAIL_I18N = {
       "message.delete": "Supprimer du journal",
       "message.deleteConfirm": "Supprimer le message du journal, avec sa copie enregistrée ?",
       "message.deleted": "Message supprimé",
+      "message.report": "Signaler comme spam",
+      "message.reportConfirm": "Signaler ce message comme spam ? Il est envoyé tel quel à l’adresse abuse des domaines de l’expéditeur vérifiés par SES.",
+      "message.reported": "Signalé comme spam à {to}",
+      "message.reportedNowhere": "Marqué comme spam ; SES n’a vérifié aucun domaine de l’expéditeur, aucun signalement n’est parti",
+      "message.reportNote": "Signalé comme spam le {date} à {to}.",
+      "message.reportNoteNowhere": "Marqué comme spam le {date} ; SES n’a vérifié aucun domaine de l’expéditeur, aucun signalement n’est parti.",
 
       "account.title": "Paramètres",
       "language.title": "Langue",
@@ -749,6 +769,7 @@ window.HIDE_MY_EMAIL_I18N = {
       "api.bad_subject": "Objet : une seule ligne, jusqu’à 300 caractères",
       "api.bad_text": "Le message doit être du texte, jusqu’à 100 000 caractères",
       "api.send_rejected": "SES n’a pas envoyé le message ; tant que le compte est dans le bac à sable SES, le destinataire doit être vérifié",
+      "api.not_incoming": "Seul un message transféré peut être signalé comme spam",
     },
 
     it: {
@@ -911,6 +932,12 @@ window.HIDE_MY_EMAIL_I18N = {
       "message.delete": "Elimina dal registro",
       "message.deleteConfirm": "Eliminare il messaggio dal registro, con la copia salvata?",
       "message.deleted": "Messaggio eliminato",
+      "message.report": "Segnala come spam",
+      "message.reportConfirm": "Segnalare il messaggio come spam? Viene inviato così come è arrivato all’indirizzo abuse dei domini del mittente verificati da SES.",
+      "message.reported": "Segnalato come spam a {to}",
+      "message.reportedNowhere": "Contrassegnato come spam; SES non ha verificato alcun dominio del mittente, quindi nessuna segnalazione è partita",
+      "message.reportNote": "Segnalato come spam il {date} a {to}.",
+      "message.reportNoteNowhere": "Contrassegnato come spam il {date}; SES non ha verificato alcun dominio del mittente, quindi nessuna segnalazione è partita.",
 
       "account.title": "Impostazioni",
       "language.title": "Lingua",
@@ -995,6 +1022,7 @@ window.HIDE_MY_EMAIL_I18N = {
       "api.bad_subject": "Oggetto: una sola riga, fino a 300 caratteri",
       "api.bad_text": "Il messaggio deve essere testo, fino a 100.000 caratteri",
       "api.send_rejected": "SES non ha inviato il messaggio; finché l’account è nella sandbox SES il destinatario deve essere verificato",
+      "api.not_incoming": "Si può segnalare come spam solo un messaggio inoltrato",
     },
   },
 };

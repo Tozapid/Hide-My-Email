@@ -1019,7 +1019,7 @@
       el("span", { class: "row-main" }, [
         el("span", { class: "row-title" }, [
           el("strong", {}, incoming ? item.from_name || item.from_address : item.to_name || item.to_address),
-          item.spam ? el("span", { class: "badge warn" }, t("message.spam")) : null,
+          item.spam || item.reported_at ? el("span", { class: "badge warn" }, t("message.spam")) : null,
         ]),
         el("span", { class: "row-sub" }, item.subject || t("message.noSubject")),
         el("span", { class: "row-sub muted" }, t(incoming ? "message.toAlias" : "message.fromAlias", { alias: item.alias })),
@@ -1050,6 +1050,9 @@
     view.fill([
       el("dl", { class: "facts" }, facts.flatMap(([name, value]) => [el("dt", {}, name), el("dd", {}, value)])),
       message.spam ? el("p", { class: "note" }, t("message.spamNote")) : null,
+      message.reported_at ? el("p", { class: "note" }, message.reported_to.length
+        ? t("message.reportNote", { date: when(message.reported_at), to: message.reported_to.join(", ") })
+        : t("message.reportNoteNowhere", { date: when(message.reported_at) })) : null,
       message.missing ? el("p", { class: "note" }, t("message.missing")) : null,
       message.attachments.length ? el("div", { class: "attachments" }, [
         el("strong", {}, t("message.attachments")),
@@ -1075,6 +1078,23 @@
             showAlias(local);
           },
         }, t("message.openAlias")),
+        // The message goes back as an abuse report to the sender's domains;
+        // the demo, without mail, only marks it.
+        incoming && !message.missing && !message.reported_at ? el("button", {
+          type: "button",
+          class: "ghost",
+          onclick: async () => {
+            if (!window.confirm(t("message.reportConfirm"))) return;
+            try {
+              const reported = await api("/messages/" + encodeURIComponent(message.id) + "/spam", { method: "POST" });
+              toast(reported.reported_to.length ? t("message.reported", { to: reported.reported_to.join(", ") }) : t("message.reportedNowhere"));
+              view.close();
+            } catch (error) {
+              toast(error.message);
+            }
+            await loadMessages(false);
+          },
+        }, t("message.report")) : null,
         el("button", {
           type: "button",
           class: "danger",
