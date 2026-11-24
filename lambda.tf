@@ -22,7 +22,7 @@ data "archive_file" "relay" {
     content  = file("${path.module}/lambda/pgp.py")
     filename = "pgp.py"
   }
-  output_path = "${path.module}/.build/hide_my_email.zip"
+  output_path = "${path.root}/.build/${local.name}-hide_my_email.zip"
   # The same zip on a workstation and in CI: the file mode is part of the hash.
   output_file_mode = "0644"
 }
@@ -37,7 +37,7 @@ data "external" "layer" {
   program = ["python3", "${path.module}/lambda/build_layer.py"]
   query = {
     requirements = "${path.module}/lambda/requirements.txt"
-    target       = "${path.module}/.build/layer"
+    target       = "${path.root}/.build/${local.name}-layer"
     python       = local.python
   }
 }
@@ -46,7 +46,7 @@ data "archive_file" "layer" {
   count            = var.pgp_enabled ? 1 : 0
   type             = "zip"
   source_dir       = data.external.layer[0].result.dir
-  output_path      = "${path.module}/.build/hide_my_email_layer.zip"
+  output_path      = "${path.root}/.build/${local.name}-hide_my_email_layer.zip"
   output_file_mode = "0644"
 }
 
@@ -125,11 +125,4 @@ resource "aws_lambda_permission" "ses" {
   principal      = "ses.amazonaws.com"
   source_account = local.account_id
   source_arn     = local.receipt_rule_arn
-}
-
-# The version of this deployment: the newest entry of CHANGELOG.md
-# (## vX.Y.Z, then optionally " — " and a date or a title). After main is
-# deployed, CI releases it on GitHub.
-locals {
-  version = regex("(?m)^## (v[0-9]+\\.[0-9]+\\.[0-9]+)(?:\\s|$)", file("${path.module}/CHANGELOG.md"))[0]
 }

@@ -636,3 +636,16 @@ dialog.modal { width: min(680px, calc(100% - 24px)); padding: 0; }
   .row { grid-template-columns: auto minmax(0, 1fr) auto; }
   .row .row-stat { grid-column: 2 / -1; grid-row: 2; display: flex; flex-wrap: wrap; gap: 2px 10px; }
 }
+
+/* iPhone: Safari zooms into a field whose text is smaller than 16px when it
+   takes the focus, and does not zoom back. The fields of a touch screen get
+   16px; text size stays as set when the phone turns. */
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media (pointer: coarse) {
+  input:not([type=checkbox], [type=radio], [type=file], [type=range]), textarea, select { font-size: 16px !important; }
+}
+
+/* 100vh is the height of the screen without the bars of a phone's browser;
+   100dvh is what is seen, so a dialog keeps its title and buttons in view. */
+.dialog, dialog.modal { max-height: calc(100dvh - 32px); }

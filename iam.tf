@@ -73,7 +73,7 @@ data "aws_iam_policy_document" "relay" {
         "ses:SendRawEmail",
         "ses:GetEmailIdentity",
       ]
-      resources = ["arn:aws:ses:${var.region}:${local.account_id}:identity/*"]
+      resources = ["arn:aws:ses:${local.region}:${local.account_id}:identity/*"]
     }
   }
 
