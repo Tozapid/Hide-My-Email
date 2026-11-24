@@ -1,19 +1,12 @@
-variable "region" {
-  type        = string
-  default     = "eu-central-1"
-  description = "Region of every resource but CloudFront. SES receives mail only in some regions, eu-central-1 among them."
-}
-
 variable "name" {
   type        = string
-  default     = "hme-demo"
-  description = "Prefix of every resource name; bucket names add the account id. The deploy role of the demo is limited to it."
+  description = "Prefix of every resource name, such as hide-my-email; bucket names add the account id."
 }
 
 variable "demo" {
   type        = bool
-  default     = true
-  description = "Public demo: the sign-in screen shows and fills in the demo sign-in, and the account settings hide the password and two-factor authentication."
+  default     = false
+  description = "Public demo: the sign-in screen shows and fills in the demo sign-in, the account settings hide the password and two-factor authentication, point-in-time recovery is off and a destroy takes the mail bucket along."
 }
 
 variable "domains" {
@@ -39,7 +32,6 @@ variable "demo_domain" {
 
 variable "forward_to" {
   type        = string
-  default     = "you@example.com"
   description = "Personal address that receives the mail of aliases without an address of their own, and the only one allowed to reply for them."
 
   validation {
@@ -56,13 +48,12 @@ variable "verify_forward_to" {
 
 variable "admin_email" {
   type        = string
-  default     = "demo@example.com"
   description = "Sign-in of the first user. Self sign-up is off; more users are added in the Cognito console."
 }
 
 variable "admin_password" {
   type        = string
-  default     = "Demo-Password-1"
+  default     = ""
   sensitive   = true
   description = "Permanent password of the first user, published in the demo and put back by the reset. Empty: Cognito mails admin_email a temporary password instead."
 }
@@ -75,26 +66,32 @@ variable "password_min_length" {
 
 variable "reset_schedule" {
   type        = string
-  default     = "rate(1 hour)"
-  description = "When the demo goes back to its initial state: aliases, keys and the message log are wiped and the examples of seed/seed.json written again, the first user gets admin_password back and other users go. An empty string turns the reset off."
+  default     = ""
+  description = "When the demo goes back to its initial state: aliases, keys and the message log are wiped and the examples of seed/seed.json written again, the first user gets admin_password back and other users go. An empty string, the default, turns the reset off."
 }
 
 variable "max_aliases" {
   type        = number
-  default     = 100
-  description = "Most aliases at once; 0 for no limit. Keeps a public demo small."
+  default     = 0
+  description = "Most aliases at once; 0, the default, for no limit. Keeps a public demo small."
 }
 
 variable "max_tokens" {
   type        = number
-  default     = 20
-  description = "Most API keys at once; 0 for no limit."
+  default     = 0
+  description = "Most API keys at once; 0, the default, for no limit."
 }
 
 variable "max_relays" {
   type        = number
-  default     = 200
-  description = "Most correspondents (reply addresses) a visitor can add on the page; 0 for no limit."
+  default     = 0
+  description = "Most correspondents (reply addresses) a visitor can add on the page; 0, the default, for no limit."
+}
+
+variable "mail_bucket_name" {
+  type        = string
+  default     = ""
+  description = "Name of the mail bucket; empty: <name>-mail-<account id>. For a stack whose bucket had another name before."
 }
 
 variable "mail_retention_days" {
@@ -113,15 +110,6 @@ variable "access_logs_bucket" {
   type        = string
   default     = ""
   description = "Bucket that the standard logs (v2) of the distributions of the page go to, under cloudfront/<name>/ (the demo) or cloudfront/<name>-<domain with dashes>/, such as the logs_bucket of an overview of the account (Tozapid/account-serverless-aws). Its policy has to let delivery.logs.amazonaws.com write there. Empty: no access logs."
-}
-
-variable "tags" {
-  type = map(string)
-  default = {
-    Managed = "IAC"
-    Project = "Hide-My-Email"
-  }
-  description = "Tags applied to supported resources."
 }
 
 variable "releases_repository" {

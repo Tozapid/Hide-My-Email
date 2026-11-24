@@ -113,7 +113,7 @@ resource "aws_s3_object" "config" {
   cache_control = "no-cache"
   # The demo publishes its sign-in on the sign-in screen; nothing else is.
   content = templatefile("${path.module}/web/config.js.tftpl", {
-    region       = var.region
+    region       = local.region
     user_pool_id = aws_cognito_user_pool.main.id
     client_id    = aws_cognito_user_pool_client.web.id
     demo = jsonencode(var.demo ? {

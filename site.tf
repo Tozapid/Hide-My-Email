@@ -24,7 +24,7 @@ module "site" {
     web_oac_id         = aws_cloudfront_origin_access_control.web.id
     mail_bucket_domain = aws_s3_bucket.mail.bucket_regional_domain_name
     mail_oac_id        = aws_cloudfront_origin_access_control.mail.id
-    api_domain         = "${aws_apigatewayv2_api.http.id}.execute-api.${var.region}.amazonaws.com"
+    api_domain         = "${aws_apigatewayv2_api.http.id}.execute-api.${local.region}.amazonaws.com"
   }
 
   policies = {

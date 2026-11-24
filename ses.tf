@@ -28,9 +28,9 @@ resource "aws_sesv2_email_identity_mail_from_attributes" "domain" {
 locals {
   mail_records = {
     for name in(local.mail ? local.alias_domains : []) : name => concat(
-      [{ key = "mx", type = "MX", name = name, value = "10 inbound-smtp.${var.region}.amazonaws.com" }],
+      [{ key = "mx", type = "MX", name = name, value = "10 inbound-smtp.${local.region}.amazonaws.com" }],
       contains(local.mail_only_domains, name) ? [] : [
-        { key = "mail-from-mx", type = "MX", name = "bounce.${name}", value = "10 feedback-smtp.${var.region}.amazonses.com" },
+        { key = "mail-from-mx", type = "MX", name = "bounce.${name}", value = "10 feedback-smtp.${local.region}.amazonses.com" },
         { key = "mail-from-spf", type = "TXT", name = "bounce.${name}", value = "v=spf1 include:amazonses.com ~all" },
         # BIMI shows a logo only for DMARC quarantine or reject on all mail, so
         # the domain gets a record of its own instead of its parent's policy.

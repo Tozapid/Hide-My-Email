@@ -1,3 +1,8 @@
+output "site_url" {
+  description = "Address of the page at the first domain, or at its CloudFront address without domains"
+  value       = local.mail ? "https://${var.domains[0].name}" : "https://${module.site["default"].distribution_domain_name}"
+}
+
 output "site_urls" {
   description = "Addresses of the page"
   value       = [for key, site in module.site : key == "default" ? "https://${site.distribution_domain_name}" : "https://${key}"]

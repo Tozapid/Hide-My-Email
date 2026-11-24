@@ -1,26 +1,14 @@
-provider "aws" {
-  region = var.region
-
-  default_tags {
-    tags = var.tags
-  }
-}
-
-# CloudFront, its certificates and its key groups live in us-east-1.
-provider "aws" {
-  alias  = "global"
-  region = "us-east-1"
-
-  default_tags {
-    tags = var.tags
-  }
-}
-
+# The module makes no providers: the caller passes aws, in the region of
+# every resource but CloudFront, and aws.global in us-east-1, where CloudFront
+# and its certificate live (see README).
 data "aws_caller_identity" "current" {}
+
+data "aws_region" "current" {}
 
 locals {
   name       = var.name
   account_id = data.aws_caller_identity.current.account_id
+  region     = data.aws_region.current.region
 
   # Mail is on once there are domains. Without them (the demo) nothing is
   # received or sent, and the aliases use a placeholder domain.
@@ -38,7 +26,12 @@ locals {
 
   reset = var.reset_schedule != ""
 
-  mail_bucket        = "${local.name}-mail-${local.account_id}"
+  # The version of this deployment: the newest entry of CHANGELOG.md
+  # (## vX.Y.Z, then optionally " — " and a date or a title). After main is
+  # deployed, CI tags and releases it on GitHub.
+  version = regex("(?m)^## (v[0-9]+\\.[0-9]+\\.[0-9]+)(?:\\s|$)", file("${path.module}/CHANGELOG.md"))[0]
+
+  mail_bucket        = var.mail_bucket_name != "" ? var.mail_bucket_name : "${local.name}-mail-${local.account_id}"
   web_bucket         = "${local.name}-web-${local.account_id}"
   mail_prefix        = "incoming/"
   messages_prefix    = "messages/"
@@ -46,7 +39,7 @@ locals {
 
   # The ARN of the receipt rule is known before the rule exists, so the bucket
   # policy and the Lambda permission can name it without a dependency cycle.
-  receipt_rule_arn = "arn:aws:ses:${var.region}:${local.account_id}:receipt-rule-set/${local.name}:receipt-rule/relay"
+  receipt_rule_arn = "arn:aws:ses:${local.region}:${local.account_id}:receipt-rule-set/${local.name}:receipt-rule/relay"
 
   distribution_arns = [for site in module.site : site.distribution_arn]
 
@@ -57,7 +50,7 @@ locals {
     "script-src 'self' https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.15/ https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/",
     "style-src 'self'",
     "img-src 'self' data:",
-    "connect-src 'self' https://cognito-idp.${var.region}.amazonaws.com",
+    "connect-src 'self' https://cognito-idp.${local.region}.amazonaws.com",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

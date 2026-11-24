@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.9.0
+
+### Changed
+
+- The repository is a Terraform module: the root makes no providers and no backend (the caller passes `aws` and `aws.global`), and a relay is a module call pinned to a release tag, `git::https://github.com/Tozapid/Hide-My-Email.git?ref=vX.Y.Z`; a newer version of a relay is a newer `ref`. The public demo is a call of the module in `demo/`, which the CI deploys (`working_directory: demo`); `demo/moved.tf` moves its resources under `module.hide` in the state, the distribution under `module.hide.module.site`. The defaults are those of production (`demo = false`, no reset, no limits); `name`, `forward_to` and `admin_email` have none. The region comes from the provider, the tags from its `default_tags`; the zips of the function and the layer are built in `.build/` of the root module. `examples/production.tfvars` became `examples/production/main.tf`.
+- With domains, the invitation of Cognito names the address of the page at the first domain.
+- Phones: fields have 16 px text on a touch screen, so an iPhone no longer zooms into the page when one takes the focus, and a dialog fits the visible screen (`100dvh`).
+
+### Added
+
+- `mail_bucket_name`: the name of the mail bucket, for a stack whose bucket had a name of its own before (empty: `<name>-mail-<account id>`).
+- Output `site_url`: the address of the page at the first domain, or at its CloudFront address without domains.
+
 ## v1.8.0
 
 ### Added

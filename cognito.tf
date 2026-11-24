@@ -24,8 +24,8 @@ resource "aws_cognito_user_pool" "main" {
 
     invite_message_template {
       email_subject = "Hide My Email"
-      email_message = "Sign in to Hide My Email.<br><br>Email: {username}<br>Temporary password: {####}<br><br>You will choose your own password at first sign-in. The temporary one works for 7 days."
-      sms_message   = "Hide My Email: {username}, temporary password {####}"
+      email_message = "${local.mail ? "Sign in at https://${local.alias_domains[0]}" : "Sign in to Hide My Email."}<br><br>Email: {username}<br>Temporary password: {####}<br><br>You will choose your own password at first sign-in. The temporary one works for 7 days."
+      sms_message   = "Hide My Email${local.mail ? " https://${local.alias_domains[0]}" : ""}: {username}, temporary password {####}"
     }
   }
 

@@ -169,39 +169,71 @@ The demo has no mail, so it signs nothing, but it shows the keys and serves WKD 
 
 A reply code is 12 characters of a SHA-256 of "alias + sender", so one sender always gets the same relay address; the readable part before it is only for people. The full data model is in the docstring of [`lambda/hide_my_email.py`](lambda/hide_my_email.py).
 
-## Test environment and production
+## Use the module
 
-The defaults deploy the **test environment**, the public demo above. It is the same code with mail turned off:
+The root of this repository is the module. It makes no providers: the caller passes `aws` (the region of everything but CloudFront, one where SES receives mail, such as `eu-central-1`) and `aws.global` (`us-east-1`, CloudFront and its certificates). Every release of [`CHANGELOG.md`](CHANGELOG.md) is a tag `vX.Y.Z`; a relay takes a newer version by a newer `ref`, and Settings → Version shows the version of the module and the releases after it.
 
-- no domains: nothing is created in SES, no DNS is touched, no MX points anywhere; the page answers at its `*.cloudfront.net` address with CloudFront's certificate;
-- aliases show the placeholder domain `demo_domain` (`hide.example.com`), and the API answers `mail_disabled` where mail would be needed (verifying a forwarding address, sending a new message); correspondents can still be added;
-- the sign-in is published and filled in (`demo = true`), password change and two-factor authentication are hidden;
-- the hourly reset (`reset_schedule`) rebuilds everything from `seed/seed.json`, and `max_aliases` / `max_tokens` / `max_relays` keep visitors from filling the table;
-- point-in-time recovery is off and the buckets are deleted with their content on `terraform destroy`.
+```hcl
+module "hide" {
+  source = "git::https://github.com/Tozapid/Hide-My-Email.git?ref=v1.9.0"
 
-**Production** turns mail on by listing domains. Start from [`examples/production.tfvars`](examples/production.tfvars):
+  providers = {
+    aws        = aws
+    aws.global = aws.global
+  }
 
-| Variable | Test environment (default) | Production |
+  name = "hide-my-email"
+  domains = [
+    # DNS in Route 53: the module writes every record.
+    { name = "hide.example.com", route53_zone = "example.com" },
+    # DNS elsewhere: the records to add are in the output dns_records.
+    # { name = "hide.example.org" },
+  ]
+  forward_to        = "you@example.com"
+  verify_forward_to = true # while the SES account is in the sandbox
+  admin_email       = "you@example.com"
+}
+```
+
+[`examples/production/main.tf`](examples/production/main.tf) is that with its providers and backend. The inputs:
+
+| Variable | Default | What it is |
 | --- | --- | --- |
-| `name` | `hme-demo` | `hide-my-email` — the prefix of every resource |
-| `demo` | `true` — published sign-in | `false` |
-| `domains` | `[]` — no mail | `[{ name = "hide.example.com", route53_zone = "example.com" }, …]` |
-| `forward_to` | `you@example.com` | your personal address |
-| `verify_forward_to` | `false` | `true` while the SES account is in the sandbox |
-| `admin_email` | `demo@example.com` | your address |
-| `admin_password` | `Demo-Password-1` | `""` — Cognito mails a temporary password |
-| `reset_schedule` | `rate(1 hour)` | `""` — no reset, no examples |
-| `max_aliases`, `max_tokens`, `max_relays` | `100`, `20`, `200` | `0` — no limit |
-| `pgp_enabled` | `true` | `true` — OpenPGP signatures and WKD; `false` removes them |
+| `name` | — | Prefix of every resource name; bucket names add the account id |
+| `domains` | `[]` | Alias domains, the first the default: mail (SES receiving and sending) and the page at each with a certificate of its own; `route53_zone` writes their records, `mail_only` gives a domain only its MX record (its SES identity is another stack's). Empty: no mail, the page at its `*.cloudfront.net` address |
+| `forward_to` | — | Your personal address, which receives the mail and alone may reply |
+| `verify_forward_to` | `false` | An SES identity for `forward_to`, while the SES account is in the sandbox |
+| `admin_email` | — | The first user of the page |
+| `admin_password` | `""` | Its permanent password; empty: Cognito mails a temporary one |
+| `pgp_enabled` | `true` | OpenPGP signatures and the Web Key Directory; `false` removes them |
+| `max_aliases`, `max_tokens`, `max_relays` | `0` | Limits; `0` for none |
+| `mail_retention_days` | `30` | Days a received message stays under `incoming/` |
+| `mail_bucket_name` | `""` | Name of the mail bucket; empty: `<name>-mail-<account id>` |
+| `demo`, `demo_domain` | `false`, `hide.example.com` | Public demo: the sign-in published and filled in, password change and two-factor authentication hidden; the domain the aliases show without `domains` |
+| `reset_schedule` | `""` | The hourly reset of the demo (`rate(1 hour)` there) |
+| `access_logs_bucket` | `""` | Bucket of the access logs (see [Access logs](#access-logs)) |
+| `releases_repository` | `Tozapid/Hide-My-Email` | The releases Settings → Version compares with |
+
+The zips of the function and its layer are built at plan time in `.build/` of the root module, not of the module: a CI that carries what a plan makes to its apply leaves `.terraform/`, where a module fetched from git lives, behind. The runner needs `python3` and access to PyPI for the layer.
 
 Steps to production:
 
 1. Pick a fresh `name` (and state key): production is a separate deployment, not a change of the demo.
-2. List the domains. With `route53_zone` the stack writes every record (MX, DKIM, MAIL FROM, DMARC, BIMI, certificate validation, A/AAAA of the page). Without it, the records to add at your DNS host are in `terraform output -json dns_records`; the certificate is validated by one of them, so the first apply of such a domain goes in two steps:
-   1. `terraform apply -target='module.site["hide.example.org"].aws_acm_certificate.this'`, add its validation CNAME (`aws acm describe-certificate --region us-east-1 …`) and the mail records;
+2. List the domains. With `route53_zone` the module writes every record (MX, DKIM, MAIL FROM, DMARC, BIMI, certificate validation, A/AAAA of the page). Without it, the records to add at your DNS host are in `terraform output -json dns_records` of the module; the certificate is validated by one of them, so the first apply of such a domain goes in two steps:
+   1. `terraform apply -target='module.hide.module.site["hide.example.org"].aws_acm_certificate.this'`, add its validation CNAME (`aws acm describe-certificate --region us-east-1 …`) and the mail records;
    2. `terraform apply` — it waits for the certificate (up to 30 minutes) and creates the distribution; then add the site's CNAME. It shares the name with the MX record, so the DNS host must flatten it (Cloudflare: CNAME flattening).
-3. Only one SES receipt rule set is active in a region; the stack activates its own. Another stack receiving mail in the same region has to add its rules to it. Check with `aws ses describe-active-receipt-rule-set`.
+3. Only one SES receipt rule set is active in a region; the module activates its own. Another stack receiving mail in the same region has to add its rules to it. Check with `aws ses describe-active-receipt-rule-set`.
 4. After apply: open the verification link AWS mails to `forward_to`, sign in with the temporary password Cognito mails to `admin_email`, and request SES production access for the region (SES console → Account dashboard): in the sandbox SES sends only to verified addresses, so replies to strangers are not sent.
+
+### The demo
+
+[`demo/`](demo) is the root module of the public demo, the same code with mail turned off:
+
+- no domains: nothing is created in SES, no DNS is touched, no MX points anywhere; the page answers at its `*.cloudfront.net` address with CloudFront's certificate;
+- aliases show the placeholder domain `demo_domain` (`hide.example.com`), and the API answers `mail_disabled` where mail would be needed (verifying a forwarding address, sending a new message); correspondents can still be added;
+- the sign-in is published and filled in (`demo = true`), password change and two-factor authentication are hidden;
+- the hourly reset (`reset_schedule`) rebuilds everything from `seed/seed.json`, and `max_aliases` / `max_tokens` / `max_relays` (`100`, `20`, `200`) keep visitors from filling the table;
+- point-in-time recovery is off and the buckets are deleted with their content on `terraform destroy`.
 
 ## Deploy
 
@@ -230,13 +262,13 @@ Steps to production:
 
 ### GitHub Actions
 
-[`.github/workflows/terraform.yml`](.github/workflows/terraform.yml) only calls the shared workflow of [Tozapid/demo-ci-cd-skeleton](https://github.com/Tozapid/demo-ci-cd-skeleton); the same caller and the same jobs serve Hide-My-Email, inventory-serverless-aws and wiki-serverless-aws:
+[`.github/workflows/terraform.yml`](.github/workflows/terraform.yml) only calls the shared workflow of [Tozapid/demo-ci-cd-skeleton](https://github.com/Tozapid/demo-ci-cd-skeleton), with `working_directory: demo`; the same caller and the same jobs serve Hide-My-Email, inventory-serverless-aws and wiki-serverless-aws:
 
-- every push and pull request, three jobs side by side: `terraform fmt` and `terraform validate`; the Lambda tests; the page's syntax check and its tests, where there are any;
+- every push and pull request, three jobs side by side: `terraform fmt` and `terraform validate` of `demo/`, and with it of the module; the Lambda tests; the page's syntax check and its tests, where there are any;
 - pull requests from this repository: `terraform plan` in the environment `demo`, summary in the run;
 - a preview of a pull request, by hand: Run workflow with `preview` = its number deploys its last push once more as `hme-demo-pr<number>`, with its own state, and comments the address on it; it is destroyed when the pull request is merged or closed, by hand (`destroy`), or by the daily sweep, which also takes those not deployed for a week;
 - a push to `main` or a manual run: plan and apply in the environment `demo`. The job stops if the plan would destroy or replace a bucket, the table or the user pool; such a change has to be applied by hand. A manual run from another branch (Actions → terraform → Run workflow, pick the branch) deploys that branch the same way, over the same site: handy to try a change on the demo before merging. The next push to `main` puts main back. Applies run one at a time across branches.
-- after `main` is deployed: the GitHub release of the newest `CHANGELOG.md` entry, once (see [Versions and releases](#versions-and-releases)). The caller grants `contents: write` for it.
+- after `main` is deployed: the tag and the GitHub release of the newest `CHANGELOG.md` entry, once (see [Versions and releases](#versions-and-releases)). The caller grants `contents: write` for it.
 
 `main` takes changes only through pull requests, merged by squash once the three checks pass (`ci / Terraform format and validate`, `ci / Lambda tests`, `ci / Frontend tests`); the branch is deleted after the merge.
 
@@ -246,22 +278,22 @@ The jobs get AWS credentials from GitHub's OIDC token (`permissions: id-token: w
 
 Every entry of [`CHANGELOG.md`](CHANGELOG.md) starts with its version, optionally followed by a date or a title: `## v1.4.0`, `## v1.4.0 — 2026-10-12` or `## v1.4.0 — versions`. Inside an entry the changes go under `### Added`, `### Changed`, `### Fixed` and `### Security`, newest entry first. A pull request that changes the site adds an entry with a higher version: minor for a feature, patch for a fix. The check `ci / Terraform format and validate` refuses a newest entry without one.
 
-- The site takes its version from the newest entry when Terraform deploys it (`local.version` in `lambda.tf`).
-- After `main` is deployed, the job `ci / Release` makes the tag and the GitHub release of the newest entry, with its text as the notes, unless that version is out already. A pull request without a new entry releases nothing.
+- The site takes its version from the newest entry when Terraform deploys it (`local.version` in `main.tf`).
+- After `main` is deployed, the job `ci / Release` makes the tag and the GitHub release of the newest entry, with its text as the notes, unless that version is out already. A pull request without a new entry releases nothing. Every version is a tag the relays pin the module to; a change that a relay has to take over is a new entry, and so a new tag.
 - Settings → Version shows the version and the releases of `releases_repository` (this repository by default) that came after it. The API (`GET /api/version`) reads them from the Atom feed of the GitHub releases (`https://github.com/<repository>/releases.atom`) and keeps them an hour. It does not use the REST API, whose hourly limit without a token is shared by every function behind Lambda's addresses. A copy deployed from a fork can compare itself with this repository by naming it in `releases_repository`; an empty value turns the check off.
 
 ### From a workstation
 
 ```bash
+cd demo
 terraform init \
   -backend-config="bucket=<state bucket>" \
   -backend-config="key=Hide-My-Email/terraform.tfstate" \
   -backend-config="region=eu-central-1"
-terraform apply                                   # the test environment
-terraform apply -var-file=terraform.tfvars        # production, see above
+terraform apply
 ```
 
-The addresses of the page are in `terraform output site_urls`.
+The addresses of the page are in `terraform output site_urls` of `demo/`.
 
 ## API
 
@@ -358,6 +390,7 @@ The bucket is yours, in the same account: its policy has to let `delivery.logs.a
 
 | Path | What it is |
 | --- | --- |
+| `main.tf`, `terraform.tf`, `variables.tf`, `outputs.tf` | The module: its providers (`aws`, `aws.global`), inputs and outputs |
 | `ses.tf` | SES identities of the domains, DKIM, MAIL FROM, DMARC, BIMI, MX, the receipt rule (mail only) |
 | `lambda.tf`, `iam.tf`, `lambda/hide_my_email.py` | The function, its permissions and code, with tests in `hide_my_email_test.py` |
 | `pgp.tf`, `lambda/pgp.py`, `lambda/build_layer.py`, `lambda/requirements.txt` | The secret of the OpenPGP keys; the keys and signatures, with tests against GnuPG in `pgp_test.py`; the `cryptography` layer and how it is built |
@@ -366,7 +399,8 @@ The bucket is yours, in the same account: its policy has to let `delivery.logs.a
 | `cloudfront.tf`, `site.tf`, `site/` | What every distribution shares; the module of the page on one domain (certificate and distribution), called per domain |
 | `web.tf`, `web/` | The page: bucket, files, translations (`i18n.js`), the BIMI logo |
 | `reset.tf`, `lambda/reset.py`, `seed/seed.json` | The hourly reset of the demo and its examples, with tests in `reset_test.py` |
-| `examples/production.tfvars` | A starting point for production |
+| `demo/` | The public demo, a call of the module, and the moves of its state |
+| `examples/production/` | A starting point for production |
 
 ## Tests
 
