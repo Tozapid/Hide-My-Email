@@ -175,7 +175,7 @@ The root of this repository is the module. It makes no providers: the caller pas
 
 ```hcl
 module "hide" {
-  source = "git::https://github.com/Tozapid/Hide-My-Email.git?ref=v1.9.0"
+  source = "git::https://github.com/Tozapid/Hide-My-Email.git?ref=v1.9.1"
 
   providers = {
     aws        = aws
@@ -399,7 +399,7 @@ The bucket is yours, in the same account: its policy has to let `delivery.logs.a
 | `cloudfront.tf`, `site.tf`, `site/` | What every distribution shares; the module of the page on one domain (certificate and distribution), called per domain |
 | `web.tf`, `web/` | The page: bucket, files, translations (`i18n.js`), the BIMI logo |
 | `reset.tf`, `lambda/reset.py`, `seed/seed.json` | The hourly reset of the demo and its examples, with tests in `reset_test.py` |
-| `demo/` | The public demo, a call of the module, and the moves of its state |
+| `demo/` | The public demo, a call of the module |
 | `examples/production/` | A starting point for production |
 
 ## Tests
