@@ -81,6 +81,11 @@ resource "aws_lambda_function" "relay" {
 
   environment {
     variables = {
+      # The demo only: what arm_reset needs to start the timer of the reset.
+      RESET_SCHEDULE_NAME    = local.reset ? local.reset_schedule_name : ""
+      RESET_DELAY_HOURS      = tostring(var.reset_delay_hours)
+      RESET_FUNCTION_ARN     = local.reset ? local.reset_function_arn : ""
+      RESET_ROLE_ARN         = local.reset ? local.reset_scheduler_role_arn : ""
       VERSION                = local.version
       RELEASES_REPOSITORY    = var.releases_repository
       DOMAIN                 = local.alias_domains[0]

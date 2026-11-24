@@ -10,7 +10,7 @@ Everything is Terraform and AWS managed services; the logic is one Python Lambda
 
 Sign in with `demo@example.com` / `Demo-Password-1` (the fields are filled in for you).
 
-The demo has **no mail**: it neither receives nor sends a single message. Everything else works on example data — create, edit, switch off, pin and delete aliases, sort and search them, read the example messages with their attachments, add correspondents to an alias and get their reply addresses, make an API key and create aliases with it (for example from Bitwarden), switch the language. The demo is public and goes back to its initial state **every hour**: aliases, API keys and the message log are wiped, the examples of [`seed/seed.json`](seed/seed.json) are written again, the demo password is put back and any other user is deleted. Changing the password and two-factor authentication are hidden in the demo, so no visitor can lock the others out.
+The demo has **no mail**: it neither receives nor sends a single message. Everything else works on example data — create, edit, switch off, pin and delete aliases, sort and search them, read the example messages with their attachments, add correspondents to an alias and get their reply addresses, make an API key and create aliases with it (for example from Bitwarden), switch the language. The demo is public and goes back to its initial state **six hours after the first change** (a demo nobody changes is not reset): aliases, API keys and the message log are wiped, the examples of [`seed/seed.json`](seed/seed.json) are written again, the demo password is put back and any other user is deleted. Changing the password and two-factor authentication are hidden in the demo, so no visitor can lock the others out.
 
 ## Features
 
@@ -76,7 +76,7 @@ flowchart LR
   CF -->|/api/*, /.well-known/openpgpkey/*| API[API Gateway] --> L
   CF -->|/attachments/*, signed cookie| MAIL
   B -->|sign in| COG[Cognito]
-  EB[EventBridge, demo only] --> R[Lambda: hourly reset]
+  EB[EventBridge Scheduler, demo only, after a change] --> R[Lambda: reset]
 ```
 
 | Part | Service |
@@ -90,7 +90,7 @@ flowchart LR
 | API | API Gateway HTTP API: `/api/*` with a Cognito JWT authorizer, `/api/v1/*` (addy.io) with an API key checked by the Lambda |
 | Signatures | Ed25519 OpenPGP keys derived from a secret in SSM (`pgp.tf`), never stored; `cryptography` in a Lambda layer built while planning; Web Key Directory through CloudFront and API Gateway |
 | Attachments | CloudFront `/attachments/*` with a one-hour signed cookie set by the API (`trusted_key_groups`, key in SSM) |
-| Demo reset | Lambda `lambda/reset.py`, EventBridge `rate(1 hour)` |
+| Demo reset | Lambda `lambda/reset.py`, a one-off EventBridge Scheduler schedule that the first change makes |
 
 ### How mail moves
 
@@ -175,7 +175,7 @@ The root of this repository is the module. It makes no providers: the caller pas
 
 ```hcl
 module "hide" {
-  source = "git::https://github.com/Tozapid/Hide-My-Email.git?ref=v1.9.1"
+  source = "git::https://github.com/Tozapid/Hide-My-Email.git?ref=v1.10.0"
 
   providers = {
     aws        = aws
@@ -210,7 +210,7 @@ module "hide" {
 | `mail_retention_days` | `30` | Days a received message stays under `incoming/` |
 | `mail_bucket_name` | `""` | Name of the mail bucket; empty: `<name>-mail-<account id>` |
 | `demo`, `demo_domain` | `false`, `hide.example.com` | Public demo: the sign-in published and filled in, password change and two-factor authentication hidden; the domain the aliases show without `domains` |
-| `reset_schedule` | `""` | The hourly reset of the demo (`rate(1 hour)` there) |
+| `reset_delay_hours` | `0` | Hours after the first change that the demo is reset (`6` there); `0`: no reset |
 | `access_logs_bucket` | `""` | Bucket of the access logs (see [Access logs](#access-logs)) |
 | `releases_repository` | `Tozapid/Hide-My-Email` | The releases Settings → Version compares with |
 
@@ -232,7 +232,7 @@ Steps to production:
 - no domains: nothing is created in SES, no DNS is touched, no MX points anywhere; the page answers at its `*.cloudfront.net` address with CloudFront's certificate;
 - aliases show the placeholder domain `demo_domain` (`hide.example.com`), and the API answers `mail_disabled` where mail would be needed (verifying a forwarding address, sending a new message); correspondents can still be added;
 - the sign-in is published and filled in (`demo = true`), password change and two-factor authentication are hidden;
-- the hourly reset (`reset_schedule`) rebuilds everything from `seed/seed.json`, and `max_aliases` / `max_tokens` / `max_relays` (`100`, `20`, `200`) keep visitors from filling the table;
+- the reset (`reset_delay_hours`, six hours after the first change) rebuilds everything from `seed/seed.json`, and `max_aliases` / `max_tokens` / `max_relays` (`100`, `20`, `200`) keep visitors from filling the table;
 - point-in-time recovery is off and the buckets are deleted with their content on `terraform destroy`.
 
 ## Deploy
@@ -398,7 +398,7 @@ The bucket is yours, in the same account: its policy has to let `delivery.logs.a
 | `s3.tf`, `dynamodb.tf` | The mail bucket and the table |
 | `cloudfront.tf`, `site.tf`, `site/` | What every distribution shares; the module of the page on one domain (certificate and distribution), called per domain |
 | `web.tf`, `web/` | The page: bucket, files, translations (`i18n.js`), the BIMI logo |
-| `reset.tf`, `lambda/reset.py`, `seed/seed.json` | The hourly reset of the demo and its examples, with tests in `reset_test.py` |
+| `reset.tf`, `lambda/reset.py`, `seed/seed.json` | The reset of the demo and its examples, with tests in `reset_test.py` |
 | `demo/` | The public demo, a call of the module |
 | `examples/production/` | A starting point for production |
 

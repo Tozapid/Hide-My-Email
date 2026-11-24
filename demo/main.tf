@@ -1,6 +1,6 @@
 # The public demo: the module of this repository at its CloudFront address,
 # with the sign-in published on the page, no domains (so no mail is received
-# or sent), small limits and the hourly reset. The CI of the repository
+# or sent), small limits and the reset six hours after a change. The CI of the repository
 # deploys it from this directory.
 provider "aws" {
   region = var.region
@@ -32,7 +32,7 @@ module "hide" {
   forward_to         = "you@example.com"
   admin_email        = "demo@example.com"
   admin_password     = "Demo-Password-1"
-  reset_schedule     = "rate(1 hour)"
+  reset_delay_hours  = 6
   max_aliases        = 100
   max_tokens         = 20
   max_relays         = 200

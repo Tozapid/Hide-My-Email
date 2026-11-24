@@ -29,7 +29,7 @@ provider "aws" {
 }
 
 module "hide" {
-  source = "git::https://github.com/Tozapid/Hide-My-Email.git?ref=v1.9.1"
+  source = "git::https://github.com/Tozapid/Hide-My-Email.git?ref=v1.10.0"
 
   providers = {
     aws        = aws

@@ -119,7 +119,7 @@ resource "aws_s3_object" "config" {
     demo = jsonencode(var.demo ? {
       email    = var.admin_email
       password = var.admin_password
-      reset    = local.reset
+      reset    = var.reset_delay_hours
     } : null)
   })
 }
