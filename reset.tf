@@ -1,12 +1,13 @@
-# Public demo: every hour everything goes back to a fresh deployment. Set
-# reset_schedule to "" to keep data (and none of this is made).
+# Public demo: reset_delay_hours after a change everything goes back to a
+# fresh deployment. Set reset_delay_hours to 0 to keep data (and none of this
+# is made).
 
 resource "aws_ssm_parameter" "admin_password" {
   #checkov:skip=CKV_AWS_337:The AWS managed SSM key is enough for a demo password that the README publishes.
   count = local.reset ? 1 : 0
 
   name        = "/${local.name}/admin-password"
-  description = "Password the hourly reset gives back to the demo user."
+  description = "Password the reset gives back to the demo user."
   type        = "SecureString"
   value       = var.admin_password
 }
@@ -159,31 +160,6 @@ resource "aws_lambda_function" "reset" {
   depends_on = [aws_iam_role_policy.reset]
 }
 
-resource "aws_cloudwatch_event_rule" "reset" {
-  count = local.reset ? 1 : 0
-
-  name                = "${local.name}-reset"
-  description         = "Put the Hide My Email demo back to its initial state."
-  schedule_expression = var.reset_schedule
-}
-
-resource "aws_cloudwatch_event_target" "reset" {
-  count = local.reset ? 1 : 0
-
-  rule = aws_cloudwatch_event_rule.reset[0].name
-  arn  = aws_lambda_function.reset[0].arn
-}
-
-resource "aws_lambda_permission" "reset" {
-  count = local.reset ? 1 : 0
-
-  statement_id  = "AllowScheduledReset"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.reset[0].function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.reset[0].arn
-}
-
 # The first examples right away, not only after the first hour.
 resource "aws_lambda_invocation" "first_reset" {
   count = local.reset ? 1 : 0
@@ -196,4 +172,56 @@ resource "aws_lambda_invocation" "first_reset" {
   }
 
   depends_on = [aws_cognito_user.admin, aws_s3_bucket_policy.mail]
+}
+
+# The timer of the reset. Nothing runs on a schedule: the first change through
+# the API (arm_reset in the function's code) makes a one-off schedule
+# <name>-reset of EventBridge Scheduler, which calls the reset function
+# reset_delay_hours later with this role and then deletes itself. A demo that
+# nobody changes is not reset, and costs nothing.
+locals {
+  reset_schedule_name      = "${local.name}-reset"
+  reset_function_arn       = "arn:aws:lambda:${local.region}:${local.account_id}:function:${local.name}-reset"
+  reset_scheduler_role_arn = "arn:aws:iam::${local.account_id}:role/${local.name}-reset-scheduler"
+}
+
+data "aws_iam_policy_document" "reset_scheduler_assume" {
+  count = local.reset ? 1 : 0
+
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["scheduler.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [local.account_id]
+    }
+  }
+}
+
+resource "aws_iam_role" "reset_scheduler" {
+  count = local.reset ? 1 : 0
+
+  name               = "${local.name}-reset-scheduler"
+  assume_role_policy = data.aws_iam_policy_document.reset_scheduler_assume[0].json
+}
+
+resource "aws_iam_role_policy" "reset_scheduler" {
+  count = local.reset ? 1 : 0
+
+  name = "${local.name}-reset-scheduler"
+  role = aws_iam_role.reset_scheduler[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = aws_lambda_function.reset[0].arn
+    }]
+  })
 }

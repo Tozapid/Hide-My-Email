@@ -64,10 +64,15 @@ variable "password_min_length" {
   description = "Minimum password length; letters of both cases, a digit and a symbol are required too."
 }
 
-variable "reset_schedule" {
-  type        = string
-  default     = ""
-  description = "When the demo goes back to its initial state: aliases, keys and the message log are wiped and the examples of seed/seed.json written again, the first user gets admin_password back and other users go. An empty string, the default, turns the reset off."
+variable "reset_delay_hours" {
+  type        = number
+  default     = 0
+  description = "Hours after the first change through the API that the demo goes back to its initial state: aliases, keys and the message log are wiped and the examples of seed/seed.json written again, the first user gets admin_password back and other users go. 0, the default, turns the reset off. Nothing runs on a schedule: a demo nobody changes is not reset."
+
+  validation {
+    condition     = var.reset_delay_hours >= 0
+    error_message = "reset_delay_hours is a number of hours, 0 for no reset."
+  }
 }
 
 variable "max_aliases" {

@@ -24,7 +24,7 @@ locals {
   # Route 53 zones of the domains that have one.
   zones = toset([for domain in var.domains : domain.route53_zone if domain.route53_zone != null])
 
-  reset = var.reset_schedule != ""
+  reset = var.reset_delay_hours > 0
 
   # The version of this deployment: the newest entry of CHANGELOG.md
   # (## vX.Y.Z, then optionally " — " and a date or a title). After main is
